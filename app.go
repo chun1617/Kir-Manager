@@ -55,7 +55,8 @@ func (a *App) GetBackupList() ([]BackupItem, error) {
 		return nil, err
 	}
 
-	currentMachineID, _ := machineid.GetRawMachineId()
+	// 取得當前 Machine ID（優先使用軟重置的自訂 ID）
+	currentMachineID := a.GetCurrentMachineID()
 
 	// 讀取原始 Machine ID
 	var originalMachineID string
@@ -210,7 +211,16 @@ func (a *App) DeleteBackup(name string) Result {
 }
 
 // GetCurrentMachineID 取得當前 Machine ID
+// 如果軟重置已啟用（有自訂 ID 且已 Patch），返回自訂 ID
+// 否則返回系統原始 Machine ID
 func (a *App) GetCurrentMachineID() string {
+	// 優先檢查軟重置的自訂 Machine ID
+	status, err := softreset.GetSoftResetStatus()
+	if err == nil && status.IsPatched && status.HasCustomID {
+		return status.CustomMachineID
+	}
+
+	// 否則返回系統 Machine ID
 	id, _ := machineid.GetRawMachineId()
 	return id
 }
