@@ -7,15 +7,13 @@
 ## 功能特色
 
 - **帳號備份與恢復** - 備份 Kiro 認證 Token 與 Machine ID，支援多帳號切換
-- **軟一鍵新機** - 跨平台虛擬化 Machine ID，不需管理員權限
-- **用量查詢與餘額監控** - 即時查詢帳號用量，支援低餘額警告
-- **Token 自動刷新** - 支援 Social 與 IdC 認證的 AccessToken 自動刷新
-- **Machine ID 管理** - 跨平台取得與修改系統 Machine ID
+- **一鍵新機** - 透過軟重置方式生成新的 Machine ID，跨平台支援
+- **Machine ID 管理** - 跨平台取得與虛擬化系統 Machine ID
 - **Kiro 進程檢測** - 自動檢測並關閉運行中的 Kiro 進程
-- **Kiro 版本自動偵測** - 自動讀取 Kiro IDE 執行檔版本號
+- **自定義安裝路徑** - 支援手動指定 Kiro 安裝路徑
 - **雙語言支援** - 繁體中文 / 簡體中文介面
 
-## 軟一鍵新機
+## 一鍵新機
 
 透過 Patch Kiro 的 `extension.js` 來攔截 Machine ID 讀取，實現虛擬化的 Machine ID。
 
@@ -25,29 +23,21 @@
 - ✅ 不修改系統 Registry，不影響其他軟體
 - ✅ 可隨時還原為系統原始 Machine ID
 
-**原理（V3 底層全面攔截）：**
-1. 在 `~/.kiro/custom-machine-id` 儲存自訂的 Machine ID（雜湊值）
-2. 在 `~/.kiro/custom-machine-id-raw` 儲存原始 UUID（供 UI 顯示）
-3. Patch Kiro 的 extension.js，注入底層攔截程式碼
-4. 攔截範圍：
-   - `vscode.env.machineId`（VSCode API）
-   - `node-machine-id` 套件（machineIdSync/machineId）
-   - `child_process.exec/execSync`（Windows REG.exe、macOS ioreg）
-   - `fs.readFile/readFileSync/promises.readFile`（Linux /etc/machine-id）
+**原理：**
+1. 在 `~/.kiro/custom-machine-id` 儲存自訂的 Machine ID
+2. Patch Kiro 的 extension.js，注入攔截程式碼
+3. 當 Kiro 讀取 `vscode.env.machineId` 時，返回自訂值
 
 **注意事項：**
-- Kiro 更新後需要重新執行 Patch（程式會自動檢測並提示）
+- Kiro 更新後需要重新執行 Patch（程式會自動提示）
 - 原始 extension.js 會備份為 `.kiro-manager-backup`
-- 「未 Patch」狀態可直接點擊執行 Patch 操作
 
 ## 系統需求
 
 | 功能 | Windows | macOS | Linux |
 |------|---------|-------|-------|
-| 軟一鍵新機 | ✅ | ✅ | ✅ |
+| 一鍵新機 | ✅ | ✅ | ✅ |
 | 帳號備份/恢復 | ✅ | ✅ | ✅ |
-| 用量查詢 | ✅ | ✅ | ✅ |
-| Token 刷新 | ✅ | ✅ | ✅ |
 | Machine ID 讀取 | ✅ | ✅ | ✅ |
 
 ## 安裝方式
@@ -98,19 +88,11 @@ wails build
 1. 點擊「一鍵新機」按鈕
 2. 程式會自動備份原始 Machine ID（首次使用時）
 3. 生成新的 UUID 作為 Machine ID
-4. 自動 Patch extension.js（如尚未 Patch）
-5. 清除 SSO 快取
+4. 清除 SSO 快取
 
 ### 還原原始機器
 
-點擊「還原」刪除自訂 Machine ID，恢復使用系統原始值，並還原 extension.js
-
-### 查詢用量
-
-- 「當前運行環境」區域顯示帳號餘額與用量
-- 點擊刷新圖標可手動刷新餘額（60 秒冷卻）
-- Token 過期時刷新圖標顯示警告色
-- 低餘額時顯示警告提示（閾值可在設定中自定義）
+點擊「還原」刪除自訂 Machine ID，恢復使用系統原始值。
 
 ## 專案結構
 
@@ -123,16 +105,11 @@ kiro-manager/
 ├── backup/             # 帳號備份模組
 ├── kiropath/           # Kiro 路徑偵測
 ├── kiroprocess/        # Kiro 進程檢測
-├── kiroversion/        # Kiro 版本偵測
 ├── machineid/          # Machine ID 核心模組
-├── settings/           # 全域設定模組
-├── softreset/          # 軟一鍵新機模組（跨平台）
+├── settings/           # 應用程式設定模組
+├── softreset/          # 一鍵新機模組（跨平台）
 │   ├── softreset.go    # 自訂 Machine ID 管理
-│   └── patch.go        # extension.js Patch 邏輯（V3）
-├── tokenrefresh/       # Token 刷新模組
-├── usage/              # 用量查詢模組
-├── internal/
-│   └── shield/         # Shield 保護殼（防毒誤判防護）
+│   └── patch.go        # extension.js Patch 邏輯
 └── frontend/           # Vue 3 前端
     ├── src/
     │   ├── App.vue
@@ -143,25 +120,19 @@ kiro-manager/
 
 ## 技術棧
 
-- **後端**: Go 1.25.5
+- **後端**: Go 1.21+
 - **前端**: Vue 3 + TypeScript + Tailwind CSS
 - **框架**: Wails v2
 - **國際化**: vue-i18n
 
 ## 注意事項
 
-⚠️ **安全提醒**
-- 建議在執行一鍵新機前先備份當前帳號
-- 軟一鍵新機不修改系統 Registry，僅影響 Kiro IDE
-
 ⚠️ **Kiro 更新後**
 - Kiro 更新後 extension.js 會被覆蓋，需要重新 Patch
 - 程式會自動檢測 Patch 狀態並提示重新 Patch
-- 可直接點擊「未 Patch」狀態執行 Patch 操作
 
-⚠️ **防毒軟體**
-- 本工具使用 Shield 保護殼架構，避免防毒軟體靜態分析誤報
-- 如遇防毒軟體攔截，請將程式加入白名單
+⚠️ **安全提醒**
+- 建議在執行一鍵新機前先備份當前帳號
 
 ## 授權條款
 

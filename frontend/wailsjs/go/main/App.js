@@ -34,6 +34,10 @@ export function GetCurrentUsageInfo() {
   return window['go']['main']['App']['GetCurrentUsageInfo']();
 }
 
+export function GetDetectedKiroInstallPath() {
+  return window['go']['main']['App']['GetDetectedKiroInstallPath']();
+}
+
 export function GetDetectedKiroVersion() {
   return window['go']['main']['App']['GetDetectedKiroVersion']();
 }
@@ -72,14 +76,6 @@ export function RefreshBackupUsage(arg1) {
 
 export function RepatchExtension() {
   return window['go']['main']['App']['RepatchExtension']();
-}
-
-export function ResetToNewMachine() {
-  return window['go']['main']['App']['ResetToNewMachine']();
-}
-
-export function RestoreOriginal() {
-  return window['go']['main']['App']['RestoreOriginal']();
 }
 
 export function RestoreSoftReset() {

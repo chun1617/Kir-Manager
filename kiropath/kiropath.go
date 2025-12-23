@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"kiro-manager/settings"
 )
 
 var (
@@ -54,10 +56,34 @@ func GetKiroConfigPath() (string, error) {
 
 
 // GetKiroInstallPath 取得 Kiro 的安裝路徑
+// 優先使用自定義路徑，若未設定則自動偵測
 // Windows: 檢查 %LOCALAPPDATA%\Programs\Kiro 和 %PROGRAMFILES%\Kiro
 // macOS: /Applications/Kiro.app
 // Linux: /usr/share/kiro, /opt/kiro, 或 /usr/local/bin/kiro
 func GetKiroInstallPath() (string, error) {
+	// 優先使用自定義路徑
+	customPath := settings.GetCustomKiroInstallPath()
+	if customPath != "" {
+		if _, err := os.Stat(customPath); err == nil {
+			return customPath, nil
+		}
+		// 自定義路徑無效，繼續嘗試自動偵測
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		return getWindowsKiroInstallPath()
+	case "darwin":
+		return getDarwinKiroInstallPath()
+	case "linux":
+		return getLinuxKiroInstallPath()
+	default:
+		return "", ErrUnsupportedPlatform
+	}
+}
+
+// GetKiroInstallPathAutoDetect 自動偵測 Kiro 安裝路徑（忽略自定義設定）
+func GetKiroInstallPathAutoDetect() (string, error) {
 	switch runtime.GOOS {
 	case "windows":
 		return getWindowsKiroInstallPath()

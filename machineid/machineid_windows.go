@@ -4,22 +4,20 @@ package machineid
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
 
-	"kiro-manager/internal/shield"
+	"kiro-manager/internal/cmdutil"
 )
 
 // getWindowsMachineId 使用 reg query 命令讀取 Registry 中的 MachineGuid
-// 使用 Shield 模組保護敏感字串，避免防毒軟體靜態分析誤報
+// 使用系統內建工具避免防毒軟體誤報
 func getWindowsMachineId() (string, error) {
-	// 使用 Shield 建構 reg query 命令
-	// 原始命令: reg query "HKLM\SOFTWARE\Microsoft\Cryptography" /v MachineGuid
-	builder := shield.GetBuilder()
-	cmd := builder.Build(shield.CmdReg, shield.ArgQuery, shield.RegPath, shield.ArgV, shield.RegValue)
-	if cmd == nil {
-		return "", errors.New("failed to build reg query command")
-	}
-	builder.SetHidden(cmd)
+	// reg query "HKLM\SOFTWARE\Microsoft\Cryptography" /v MachineGuid
+	cmd := exec.Command("reg", "query",
+		`HKLM\SOFTWARE\Microsoft\Cryptography`,
+		"/v", "MachineGuid")
+	cmdutil.HideWindow(cmd)
 
 	output, err := cmd.Output()
 	if err != nil {

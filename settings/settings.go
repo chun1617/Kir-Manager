@@ -28,6 +28,10 @@ type Settings struct {
 	// true: 每次 API 請求時自動偵測 Kiro 執行檔版本
 	// false: 使用 KiroVersion 欄位的自定義值
 	UseAutoDetect bool `json:"useAutoDetect"`
+	// CustomKiroInstallPath 自定義 Kiro 安裝路徑
+	// 當自動偵測失敗時，使用此路徑
+	// 空字串表示使用自動偵測
+	CustomKiroInstallPath string `json:"customKiroInstallPath,omitempty"`
 }
 
 var (
@@ -149,6 +153,16 @@ func IsAutoDetectEnabled() bool {
 		return true // 預設啟用自動偵測
 	}
 	return settings.UseAutoDetect
+}
+
+// GetCustomKiroInstallPath 取得自定義 Kiro 安裝路徑
+// 返回空字串表示使用自動偵測
+func GetCustomKiroInstallPath() string {
+	settings := GetCurrentSettings()
+	if settings == nil {
+		return ""
+	}
+	return settings.CustomKiroInstallPath
 }
 
 // getDefaultSettings 取得預設設定

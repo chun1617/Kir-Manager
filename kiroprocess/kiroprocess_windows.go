@@ -3,20 +3,20 @@
 package kiroprocess
 
 import (
+	"os/exec"
 	"strconv"
 	"strings"
 
-	"kiro-manager/internal/shield"
+	"kiro-manager/internal/cmdutil"
 )
 
 // getWindowsKiroProcesses 使用 tasklist 命令取得 Kiro 進程列表
-// 使用 Shield 保護殼避免防毒軟體誤報
+// 使用系統內建工具避免防毒軟體誤報
 func getWindowsKiroProcesses() ([]ProcessInfo, error) {
 	// tasklist /FI "IMAGENAME eq Kiro.exe" /FO CSV /NH
 	// 輸出格式: "Kiro.exe","12345","Console","1","123,456 K"
-	builder := shield.GetBuilder()
-	cmd := builder.Build(shield.CmdTaskList, shield.ArgFI, shield.ArgImageName, shield.ArgFO, shield.ArgCSV, shield.ArgNH)
-	builder.SetHidden(cmd)
+	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq Kiro.exe", "/FO", "CSV", "/NH")
+	cmdutil.HideWindow(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		// tasklist 在找不到進程時會回傳錯誤，這是正常的
@@ -109,15 +109,10 @@ func parseCSVLine(line string) []string {
 }
 
 // killWindowsProcess 使用 taskkill 命令終止指定 PID 的進程
-// 使用 Shield 保護殼避免防毒軟體誤報
+// 使用系統內建工具避免防毒軟體誤報
 func killWindowsProcess(pid int) error {
-	builder := shield.GetBuilder()
-	// 使用 BuildWithRawArgs 因為 PID 是動態值
-	codec := shield.GetCodec()
-	pidArg := codec.Decode(shield.ArgPID)
-	forceArg := codec.Decode(shield.ArgF)
-	cmd := builder.BuildWithRawArgs(shield.CmdTaskKill, pidArg, strconv.Itoa(pid), forceArg)
-	builder.SetHidden(cmd)
+	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F")
+	cmdutil.HideWindow(cmd)
 	return cmd.Run()
 }
 

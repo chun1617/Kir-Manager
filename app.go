@@ -10,11 +10,10 @@ import (
 
 	"kiro-manager/awssso"
 	"kiro-manager/backup"
-	"kiro-manager/internal/shield"
+	"kiro-manager/kiropath"
 	"kiro-manager/kiroprocess"
 	"kiro-manager/kiroversion"
 	"kiro-manager/machineid"
-	// "kiro-manager/reset" // 暫時停用硬一鍵新機功能
 	"kiro-manager/settings"
 	"kiro-manager/softreset"
 	"kiro-manager/tokenrefresh"
@@ -34,11 +33,6 @@ func NewApp() *App {
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-
-	// 初始化 Shield 保護殼模組
-	// 用於保護敏感字串和命令，避免防毒軟體靜態分析誤報
-	shield.Init()
-
 	// 不再於啟動時自動備份，避免觸發防毒軟體誤報
 	// 改為在用戶首次執行需要備份的操作時才觸發
 }
@@ -279,8 +273,7 @@ func (a *App) CreateBackup(name string) Result {
 	return Result{Success: true, Message: "備份成功"}
 }
 
-// SwitchToBackup 切換至指定備份帳號
-// 注意：硬一鍵新機功能暫時停用，此函數目前僅恢復 token
+// SwitchToBackup 切換至指定備份帳號（恢復 token）
 func (a *App) SwitchToBackup(name string) Result {
 	if name == "" {
 		return Result{Success: false, Message: "請選擇備份"}
@@ -297,21 +290,14 @@ func (a *App) SwitchToBackup(name string) Result {
 		}
 	}
 
-	// 硬一鍵新機功能暫時停用，不再修改系統 Machine ID
-	// 僅恢復 token
 	if err := backup.RestoreBackup(name); err != nil {
 		return Result{Success: false, Message: fmt.Sprintf("恢復 Token 失敗: %v", err)}
 	}
 
-	return Result{Success: true, Message: "切換成功（僅恢復 Token，Machine ID 未變更）"}
+	return Result{Success: true, Message: "切換成功"}
 }
 
-// RestoreOriginal 還原原始機器（僅還原 Machine ID，不涉及 token）
-// 注意：硬一鍵新機功能暫時停用，此函數目前無法使用
-func (a *App) RestoreOriginal() Result {
-	// 硬一鍵新機功能暫時停用
-	return Result{Success: false, Message: "硬一鍵新機功能暫時停用，請使用軟一鍵新機的「還原」功能"}
-}
+
 
 // DeleteBackup 刪除備份
 func (a *App) DeleteBackup(name string) Result {
@@ -327,12 +313,14 @@ func (a *App) DeleteBackup(name string) Result {
 }
 
 // GetCurrentMachineID 取得當前 Machine ID
-// 如果軟重置已啟用（有自訂 ID 且已 Patch），返回自訂 ID
+// 如果有自訂 Machine ID，返回自訂 ID（不論 Patch 狀態）
 // 否則返回系統原始 Machine ID
 func (a *App) GetCurrentMachineID() string {
 	// 優先檢查軟重置的自訂 Machine ID
+	// 注意：只要有自訂 ID 就返回，不需要檢查 IsPatched
+	// 因為 IsPatched 可能因為找不到 extension.js 而失敗
 	status, err := softreset.GetSoftResetStatus()
-	if err == nil && status.IsPatched && status.HasCustomID {
+	if err == nil && status.HasCustomID {
 		return status.CustomMachineID
 	}
 
@@ -354,17 +342,12 @@ func (a *App) EnsureOriginalBackup() Result {
 	return Result{Success: true, Message: "原始備份已存在"}
 }
 
-// ResetToNewMachine 一鍵新機（硬重置）
-// 注意：硬一鍵新機功能暫時停用，請使用軟一鍵新機
-func (a *App) ResetToNewMachine() Result {
-	// 硬一鍵新機功能暫時停用
-	return Result{Success: false, Message: "硬一鍵新機功能暫時停用，請使用軟一鍵新機"}
-}
+
 
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.2.0",
+		"version":   "0.2.1",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}
@@ -640,32 +623,44 @@ func (a *App) UnpatchExtension() Result {
 
 // AppSettings 應用設定（前端用）
 type AppSettings struct {
-	LowBalanceThreshold float64 `json:"lowBalanceThreshold"` // 低餘額閾值（0.0 ~ 1.0）
-	KiroVersion         string  `json:"kiroVersion"`         // Kiro IDE 版本號
-	UseAutoDetect       bool    `json:"useAutoDetect"`       // 是否使用自動偵測版本號
+	LowBalanceThreshold   float64 `json:"lowBalanceThreshold"`   // 低餘額閾值（0.0 ~ 1.0）
+	KiroVersion           string  `json:"kiroVersion"`           // Kiro IDE 版本號
+	UseAutoDetect         bool    `json:"useAutoDetect"`         // 是否使用自動偵測版本號
+	CustomKiroInstallPath string  `json:"customKiroInstallPath"` // 自定義 Kiro 安裝路徑
 }
 
 // GetSettings 取得全域設定
 func (a *App) GetSettings() AppSettings {
 	s := settings.GetCurrentSettings()
 	return AppSettings{
-		LowBalanceThreshold: s.LowBalanceThreshold,
-		KiroVersion:         s.KiroVersion,
-		UseAutoDetect:       s.UseAutoDetect,
+		LowBalanceThreshold:   s.LowBalanceThreshold,
+		KiroVersion:           s.KiroVersion,
+		UseAutoDetect:         s.UseAutoDetect,
+		CustomKiroInstallPath: s.CustomKiroInstallPath,
 	}
 }
 
 // SaveSettings 儲存全域設定
 func (a *App) SaveSettings(appSettings AppSettings) Result {
 	s := &settings.Settings{
-		LowBalanceThreshold: appSettings.LowBalanceThreshold,
-		KiroVersion:         appSettings.KiroVersion,
-		UseAutoDetect:       appSettings.UseAutoDetect,
+		LowBalanceThreshold:   appSettings.LowBalanceThreshold,
+		KiroVersion:           appSettings.KiroVersion,
+		UseAutoDetect:         appSettings.UseAutoDetect,
+		CustomKiroInstallPath: appSettings.CustomKiroInstallPath,
 	}
 	if err := settings.SaveSettings(s); err != nil {
 		return Result{Success: false, Message: fmt.Sprintf("儲存設定失敗: %v", err)}
 	}
 	return Result{Success: true, Message: "設定已儲存"}
+}
+
+// GetDetectedKiroInstallPath 自動偵測 Kiro 安裝路徑
+func (a *App) GetDetectedKiroInstallPath() Result {
+	path, err := kiropath.GetKiroInstallPathAutoDetect()
+	if err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("偵測失敗: %v", err)}
+	}
+	return Result{Success: true, Message: path}
 }
 
 // GetDetectedKiroVersion 自動偵測 Kiro IDE 執行檔的版本號

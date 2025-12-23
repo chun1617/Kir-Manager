@@ -23,6 +23,7 @@ export namespace main {
 	    lowBalanceThreshold: number;
 	    kiroVersion: string;
 	    useAutoDetect: boolean;
+	    customKiroInstallPath: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -33,6 +34,7 @@ export namespace main {
 	        this.lowBalanceThreshold = source["lowBalanceThreshold"];
 	        this.kiroVersion = source["kiroVersion"];
 	        this.useAutoDetect = source["useAutoDetect"];
+	        this.customKiroInstallPath = source["customKiroInstallPath"];
 	    }
 	}
 	export class BackupItem {

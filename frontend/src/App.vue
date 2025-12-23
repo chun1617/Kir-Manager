@@ -41,6 +41,7 @@ interface AppSettings {
   lowBalanceThreshold: number
   kiroVersion: string
   useAutoDetect: boolean
+  customKiroInstallPath: string
 }
 
 declare global {
@@ -51,12 +52,10 @@ declare global {
           GetBackupList(): Promise<BackupItem[]>
           CreateBackup(name: string): Promise<Result>
           SwitchToBackup(name: string): Promise<Result>
-          RestoreOriginal(): Promise<Result>
           RestoreSoftReset(): Promise<Result>
           DeleteBackup(name: string): Promise<Result>
           GetCurrentMachineID(): Promise<string>
           EnsureOriginalBackup(): Promise<Result>
-          ResetToNewMachine(): Promise<Result>
           SoftResetToNewMachine(): Promise<Result>
           IsKiroRunning(): Promise<boolean>
           GetSoftResetStatus(): Promise<{
@@ -82,6 +81,7 @@ declare global {
           GetSettings(): Promise<AppSettings>
           SaveSettings(settings: AppSettings): Promise<Result>
           GetDetectedKiroVersion(): Promise<Result>
+          GetDetectedKiroInstallPath(): Promise<Result>
           OpenExtensionFolder(): Promise<Result>
           OpenMachineIDFolder(): Promise<Result>
           OpenSSOCacheFolder(): Promise<Result>
@@ -108,7 +108,7 @@ const toast = ref<{ show: boolean; message: string; type: 'success' | 'error' }>
 })
 
 // 一鍵新機模式相關
-const resetMode = ref<'soft' | 'hard'>('soft')
+const resetMode = ref<'soft'>('soft')
 const hasUsedReset = ref(false)
 const showFirstTimeResetModal = ref(false)
 const showSettingsPanel = ref(false)
@@ -145,13 +145,21 @@ const softResetStatus = ref<{
 const appSettings = ref<AppSettings>({
   lowBalanceThreshold: 0.2,
   kiroVersion: '0.7.5',
-  useAutoDetect: true
+  useAutoDetect: true,
+  customKiroInstallPath: ''
 })
 
 // Kiro 版本號輸入值
 const kiroVersionInput = ref('0.7.5')
 // 追蹤版本號是否被用戶手動修改（用於控制確認按鍵狀態）
 const kiroVersionModified = ref(false)
+
+// Kiro 安裝路徑輸入值
+const kiroInstallPathInput = ref('')
+// 追蹤路徑是否被用戶手動修改
+const kiroInstallPathModified = ref(false)
+// 偵測路徑中狀態
+const detectingPath = ref(false)
 
 // 低餘額閾值預覽值（拖動滑桿時實時更新）
 const thresholdPreview = ref(20)
@@ -251,6 +259,8 @@ const loadBackups = async () => {
     thresholdPreview.value = Math.round(appSettings.value.lowBalanceThreshold * 100)
     kiroVersionInput.value = appSettings.value.kiroVersion || '0.7.5'
     kiroVersionModified.value = false // 重置修改狀態
+    kiroInstallPathInput.value = appSettings.value.customKiroInstallPath || ''
+    kiroInstallPathModified.value = false // 重置修改狀態
     await checkKiroStatus()
   } catch (e) {
     console.error(e)
@@ -264,7 +274,8 @@ const saveLowBalanceThreshold = async (value: number) => {
     const result = await window.go.main.App.SaveSettings({
       lowBalanceThreshold: value,
       kiroVersion: appSettings.value.kiroVersion,
-      useAutoDetect: appSettings.value.useAutoDetect
+      useAutoDetect: appSettings.value.useAutoDetect,
+      customKiroInstallPath: appSettings.value.customKiroInstallPath
     })
     if (result.success) {
       appSettings.value.lowBalanceThreshold = value
@@ -296,7 +307,8 @@ const saveKiroVersion = async () => {
     const result = await window.go.main.App.SaveSettings({
       lowBalanceThreshold: appSettings.value.lowBalanceThreshold,
       kiroVersion: version,
-      useAutoDetect: false
+      useAutoDetect: false,
+      customKiroInstallPath: appSettings.value.customKiroInstallPath
     })
     if (result.success) {
       appSettings.value.kiroVersion = version
@@ -330,7 +342,8 @@ const detectKiroVersion = async () => {
       const saveResult = await window.go.main.App.SaveSettings({
         lowBalanceThreshold: appSettings.value.lowBalanceThreshold,
         kiroVersion: result.message,
-        useAutoDetect: true
+        useAutoDetect: true,
+        customKiroInstallPath: appSettings.value.customKiroInstallPath
       })
       if (saveResult.success) {
         appSettings.value.kiroVersion = result.message
@@ -348,6 +361,88 @@ const detectKiroVersion = async () => {
     showToast(t('settings.detectVersionFailed'), 'error')
   } finally {
     detectingVersion.value = false
+  }
+}
+
+// 處理安裝路徑輸入變更
+const onKiroInstallPathInput = () => {
+  kiroInstallPathModified.value = true
+}
+
+// 儲存自定義安裝路徑
+const saveKiroInstallPath = async () => {
+  const path = kiroInstallPathInput.value.trim()
+  
+  try {
+    const result = await window.go.main.App.SaveSettings({
+      lowBalanceThreshold: appSettings.value.lowBalanceThreshold,
+      kiroVersion: appSettings.value.kiroVersion,
+      useAutoDetect: appSettings.value.useAutoDetect,
+      customKiroInstallPath: path
+    })
+    if (result.success) {
+      appSettings.value.customKiroInstallPath = path
+      kiroInstallPathModified.value = false
+      showToast(t('message.success'), 'success')
+    } else {
+      showToast(result.message, 'error')
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+// 自動偵測 Kiro 安裝路徑
+const detectKiroInstallPath = async () => {
+  detectingPath.value = true
+  try {
+    const result = await window.go.main.App.GetDetectedKiroInstallPath()
+    if (result.success) {
+      kiroInstallPathInput.value = result.message
+      // 儲存偵測到的路徑
+      const saveResult = await window.go.main.App.SaveSettings({
+        lowBalanceThreshold: appSettings.value.lowBalanceThreshold,
+        kiroVersion: appSettings.value.kiroVersion,
+        useAutoDetect: appSettings.value.useAutoDetect,
+        customKiroInstallPath: result.message
+      })
+      if (saveResult.success) {
+        appSettings.value.customKiroInstallPath = result.message
+        kiroInstallPathModified.value = false
+        showToast(t('message.success'), 'success')
+      } else {
+        showToast(saveResult.message, 'error')
+      }
+    } else {
+      showToast(t('settings.detectPathFailed'), 'error')
+    }
+  } catch (e) {
+    console.error(e)
+    showToast(t('settings.detectPathFailed'), 'error')
+  } finally {
+    detectingPath.value = false
+  }
+}
+
+// 清除自定義安裝路徑（恢復自動偵測）
+const clearKiroInstallPath = async () => {
+  try {
+    const result = await window.go.main.App.SaveSettings({
+      lowBalanceThreshold: appSettings.value.lowBalanceThreshold,
+      kiroVersion: appSettings.value.kiroVersion,
+      useAutoDetect: appSettings.value.useAutoDetect,
+      customKiroInstallPath: ''
+    })
+    if (result.success) {
+      appSettings.value.customKiroInstallPath = ''
+      kiroInstallPathInput.value = ''
+      kiroInstallPathModified.value = false
+      showToast(t('message.success'), 'success')
+    } else {
+      showToast(result.message, 'error')
+    }
+  } catch (e) {
+    console.error(e)
   }
 }
 
@@ -402,12 +497,7 @@ const restoreOriginal = async () => {
   
   loading.value = true
   try {
-    let result: Result
-    if (resetMode.value === 'soft') {
-      result = await window.go.main.App.RestoreSoftReset()
-    } else {
-      result = await window.go.main.App.RestoreOriginal()
-    }
+    const result = await window.go.main.App.RestoreSoftReset()
     if (result.success) {
       showToast(t('message.restartKiro'), 'success')
       await loadBackups()
@@ -421,7 +511,7 @@ const restoreOriginal = async () => {
 
 const resetToNew = async () => {
   // 首次使用時顯示提示 Modal
-  if (!hasUsedReset.value && resetMode.value === 'soft') {
+  if (!hasUsedReset.value) {
     showFirstTimeResetModal.value = true
     return
   }
@@ -439,12 +529,7 @@ const resetToNew = async () => {
 const executeReset = async () => {
   resetting.value = true
   try {
-    let result: Result
-    if (resetMode.value === 'soft') {
-      result = await window.go.main.App.SoftResetToNewMachine()
-    } else {
-      result = await window.go.main.App.ResetToNewMachine()
-    }
+    const result = await window.go.main.App.SoftResetToNewMachine()
     
     if (result.success) {
       showToast(result.message, 'success')
@@ -469,13 +554,6 @@ const confirmFirstTimeReset = async () => {
   })
   if (!confirmed) return
   await executeReset()
-}
-
-const setResetMode = (_mode: 'soft' | 'hard') => {
-  // 硬一鍵新機暫時停用，強制使用軟一鍵新機
-  // _mode 參數保留以維持 API 相容性，但目前不使用
-  resetMode.value = 'soft'
-  localStorage.setItem('kiro-manager-reset-mode', 'soft')
 }
 
 const deleteBackup = async (name: string) => {
@@ -819,169 +897,171 @@ onMounted(() => {
         
         <!-- 設定面板 -->
         <div v-if="showSettingsPanel" class="space-y-6">
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- 左欄：一鍵新機模式設定 -->
-          <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex flex-col">
-            <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-              <Icon name="Sparkles" class="w-5 h-5 mr-2 text-zinc-400" />
-              {{ t('settings.resetMode') }}
-            </h4>
-            
-            <div class="space-y-3 flex-1 flex flex-col justify-center">
-              <!-- 軟一鍵新機選項 -->
-              <label 
-                @click="setResetMode('soft')"
-                :class="[
-                  'flex items-start p-4 rounded-lg border cursor-pointer transition-all',
-                  resetMode === 'soft' 
-                    ? 'bg-zinc-800 border-zinc-600' 
-                    : 'border-zinc-700 hover:border-zinc-600'
-                ]"
-              >
-                <div :class="[
-                  'w-5 h-5 rounded-full border-2 flex items-center justify-center mr-4 mt-0.5 flex-shrink-0',
-                  resetMode === 'soft' ? 'border-zinc-400' : 'border-zinc-500'
-                ]">
-                  <div v-if="resetMode === 'soft'" class="w-2.5 h-2.5 rounded-full bg-zinc-400"></div>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+            <!-- 左欄：Kiro 安裝路徑 + Kiro 版本號 -->
+            <div class="flex flex-col gap-6">
+              <!-- Kiro 安裝路徑設定 -->
+              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
+                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
+                  <Icon name="FolderOpen" class="w-5 h-5 mr-2 text-zinc-400" />
+                  {{ t('settings.kiroInstallPath') }}
+                </h4>
+                
+                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.kiroInstallPathDesc') }}</p>
+                
+                <div class="flex-1"></div>
+                
+                <!-- 狀態指示 -->
+                <div class="flex items-center gap-2 mb-3">
+                  <div :class="[
+                    'w-2 h-2 rounded-full',
+                    appSettings.customKiroInstallPath ? 'bg-app-accent' : 'bg-green-500'
+                  ]"></div>
+                  <span class="text-xs text-zinc-400">
+                    {{ appSettings.customKiroInstallPath ? t('settings.usingCustomPath') : t('settings.usingAutoDetect') }}
+                  </span>
                 </div>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 mb-1">
-                    <span :class="['font-medium', resetMode === 'soft' ? 'text-zinc-200' : 'text-zinc-300']">
-                      {{ t('settings.softReset') }}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-app-success/20 text-app-success border border-app-success/30">
-                      {{ t('settings.recommended') }}
-                    </span>
-                  </div>
-                  <p class="text-zinc-500 text-sm">{{ t('settings.softResetDesc') }}</p>
+                
+                <div class="flex gap-2">
+                  <input 
+                    type="text"
+                    v-model="kiroInstallPathInput"
+                    @input="onKiroInstallPathInput"
+                    :placeholder="t('settings.kiroInstallPathPlaceholder')"
+                    class="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-300 text-sm focus:outline-none focus:border-zinc-500 placeholder-zinc-600"
+                  />
+                  <button
+                    v-if="kiroInstallPathModified"
+                    @click="saveKiroInstallPath"
+                    class="px-3 py-2 bg-app-accent hover:bg-app-accent/80 text-white rounded-lg text-sm transition-colors"
+                  >
+                    {{ t('backup.confirm') }}
+                  </button>
+                  <button
+                    v-else
+                    @click="detectKiroInstallPath"
+                    :disabled="detectingPath"
+                    class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-lg text-sm transition-colors disabled:opacity-50"
+                  >
+                    {{ detectingPath ? '...' : t('settings.detectPath') }}
+                  </button>
+                  <button
+                    v-if="appSettings.customKiroInstallPath && !kiroInstallPathModified"
+                    @click="clearKiroInstallPath"
+                    class="px-3 py-2 bg-zinc-800 hover:bg-red-900/30 border border-zinc-700 hover:border-red-800/50 text-zinc-400 hover:text-red-400 rounded-lg text-sm transition-colors"
+                  >
+                    {{ t('settings.clearPath') }}
+                  </button>
                 </div>
-              </label>
+              </div>
               
-              <!-- 硬一鍵新機選項（暫時停用） -->
-              <div 
-                :class="[
-                  'flex items-start p-4 rounded-lg border transition-all opacity-50 cursor-not-allowed',
-                  'border-zinc-700/50 bg-zinc-900/50'
-                ]"
-              >
-                <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center mr-4 mt-0.5 flex-shrink-0 border-zinc-600">
-                </div>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 mb-1">
-                    <span class="font-medium text-zinc-500">
-                      {{ t('settings.hardReset') }}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-zinc-700/50 text-zinc-500 border border-zinc-600/30">
-                      {{ t('settings.hardResetDisabled') }}
-                    </span>
-                  </div>
-                  <p class="text-zinc-600 text-sm">{{ t('settings.hardResetDisabledReason') }}</p>
+              <!-- Kiro 版本號設定 -->
+              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
+                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
+                  <Icon name="Tag" class="w-5 h-5 mr-2 text-zinc-400" />
+                  {{ t('settings.kiroVersion') }}
+                  <!-- 自動偵測狀態指示 -->
+                  <span 
+                    v-if="appSettings.useAutoDetect" 
+                    class="ml-3 px-2 py-0.5 rounded text-[10px] bg-app-success/20 text-app-success border border-app-success/30"
+                  >
+                    {{ t('settings.autoDetectActive') }}
+                  </span>
+                </h4>
+                
+                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.kiroVersionDesc') }}</p>
+                
+                <div class="flex-1"></div>
+                
+                <div class="flex items-center gap-2">
+                  <input 
+                    v-model="kiroVersionInput"
+                    @input="onKiroVersionInput"
+                    type="text"
+                    :placeholder="t('settings.kiroVersionPlaceholder')"
+                    class="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 text-sm font-mono focus:outline-none focus:border-app-accent transition-colors"
+                  />
+                  <button 
+                    @click="detectKiroVersion"
+                    :disabled="detectingVersion || appSettings.useAutoDetect"
+                    class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-200 rounded-lg text-sm transition-colors flex items-center gap-2"
+                  >
+                    <Icon v-if="detectingVersion" name="RefreshCw" class="w-4 h-4 animate-spin" />
+                    <Icon v-else name="Search" class="w-4 h-4" />
+                    {{ t('settings.detectVersion') }}
+                  </button>
+                  <button 
+                    @click="saveKiroVersion"
+                    :disabled="!kiroVersionModified"
+                    class="px-3 py-2 bg-app-accent hover:bg-app-accent/80 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
+                  >
+                    {{ t('backup.confirm') }}
+                  </button>
                 </div>
               </div>
             </div>
-          </div>
           
-          <!-- 右欄：介面語言 + 低餘額設置 -->
-          <div class="space-y-6">
-            <!-- 語言設定 -->
-            <div class="bg-zinc-900 border border-app-border rounded-xl p-6">
-              <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                <Icon name="Globe" class="w-5 h-5 mr-2 text-zinc-400" />
-                {{ t('settings.language') }}
-              </h4>
-              
-              <div class="flex gap-3">
-                <button 
-                  v-for="lang in ['zh-TW', 'zh-CN']" 
-                  :key="lang"
-                  @click="switchLanguage(lang)"
-                  :class="[
-                    'flex-1 py-3 px-4 rounded-lg border transition-all text-sm',
-                    locale === lang 
-                      ? 'bg-zinc-800 border-zinc-600 text-zinc-200' 
-                      : 'border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-300'
-                  ]"
-                >
-                  {{ lang === 'zh-TW' ? t('language.zhTW') : t('language.zhCN') }}
-                </button>
-              </div>
-            </div>
-            
-            <!-- 低餘額閾值設定 -->
-            <div class="bg-zinc-900 border border-app-border rounded-xl p-6">
-              <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                <Icon name="AlertTriangle" class="w-5 h-5 mr-2 text-zinc-400" />
-                {{ t('settings.lowBalanceThreshold') }}
-              </h4>
-              
-              <p class="text-zinc-500 text-sm mb-4">{{ t('settings.lowBalanceThresholdDesc') }}</p>
-              
-              <div class="flex items-center gap-4">
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  step="5"
-                  :value="thresholdPreview"
-                  @input="(e) => thresholdPreview = Number((e.target as HTMLInputElement).value)"
-                  @change="(e) => saveLowBalanceThreshold(Number((e.target as HTMLInputElement).value) / 100)"
-                  class="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-app-accent"
-                />
-                <span class="text-zinc-200 font-mono text-sm w-12 text-right">
-                  {{ thresholdPreview }}%
-                </span>
+            <!-- 右欄：介面語言 + 低餘額設置 -->
+            <div class="flex flex-col gap-6">
+              <!-- 語言設定 -->
+              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
+                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
+                  <Icon name="Globe" class="w-5 h-5 mr-2 text-zinc-400" />
+                  {{ t('settings.language') }}
+                </h4>
+                
+                <div class="flex-1"></div>
+                
+                <div class="flex gap-3">
+                  <button 
+                    v-for="lang in ['zh-TW', 'zh-CN']" 
+                    :key="lang"
+                    @click="switchLanguage(lang)"
+                    :class="[
+                      'flex-1 py-3 px-4 rounded-lg border transition-all text-sm',
+                      locale === lang 
+                        ? 'bg-zinc-800 border-zinc-600 text-zinc-200' 
+                        : 'border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-300'
+                    ]"
+                  >
+                    {{ lang === 'zh-TW' ? t('language.zhTW') : t('language.zhCN') }}
+                  </button>
+                </div>
               </div>
               
-              <div class="flex justify-between text-xs text-zinc-500 mt-2">
-                <span>0%</span>
-                <span>50%</span>
-                <span>100%</span>
+              <!-- 低餘額閾值設定 -->
+              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
+                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
+                  <Icon name="AlertTriangle" class="w-5 h-5 mr-2 text-zinc-400" />
+                  {{ t('settings.lowBalanceThreshold') }}
+                </h4>
+                
+                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.lowBalanceThresholdDesc') }}</p>
+                
+                <div class="flex-1"></div>
+                
+                <div class="flex items-center gap-4">
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="100" 
+                    step="5"
+                    :value="thresholdPreview"
+                    @input="(e) => thresholdPreview = Number((e.target as HTMLInputElement).value)"
+                    @change="(e) => saveLowBalanceThreshold(Number((e.target as HTMLInputElement).value) / 100)"
+                    class="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-app-accent"
+                  />
+                  <span class="text-zinc-200 font-mono text-sm w-12 text-right">
+                    {{ thresholdPreview }}%
+                  </span>
+                </div>
+                
+                <div class="flex justify-between text-xs text-zinc-500 mt-2">
+                  <span>0%</span>
+                  <span>50%</span>
+                  <span>100%</span>
+                </div>
               </div>
-            </div>
-            
-          </div>
-          </div>
-          
-          <!-- Kiro 版本號設定（獨佔一行） -->
-          <div class="bg-zinc-900 border border-app-border rounded-xl p-6">
-            <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-              <Icon name="Tag" class="w-5 h-5 mr-2 text-zinc-400" />
-              {{ t('settings.kiroVersion') }}
-              <!-- 自動偵測狀態指示 -->
-              <span 
-                v-if="appSettings.useAutoDetect" 
-                class="ml-3 px-2 py-0.5 rounded text-[10px] bg-app-success/20 text-app-success border border-app-success/30"
-              >
-                {{ t('settings.autoDetectActive') }}
-              </span>
-            </h4>
-            
-            <p class="text-zinc-500 text-sm mb-4">{{ t('settings.kiroVersionDesc') }}</p>
-            
-            <div class="flex items-center gap-3 max-w-md">
-              <input 
-                v-model="kiroVersionInput"
-                @input="onKiroVersionInput"
-                type="text"
-                :placeholder="t('settings.kiroVersionPlaceholder')"
-                class="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 text-sm font-mono focus:outline-none focus:border-app-accent transition-colors"
-              />
-              <button 
-                @click="detectKiroVersion"
-                :disabled="detectingVersion || appSettings.useAutoDetect"
-                class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-200 rounded-lg text-sm transition-colors flex items-center gap-2"
-              >
-                <Icon v-if="detectingVersion" name="RefreshCw" class="w-4 h-4 animate-spin" />
-                <Icon v-else name="Search" class="w-4 h-4" />
-                {{ t('settings.detectVersion') }}
-              </button>
-              <button 
-                @click="saveKiroVersion"
-                :disabled="!kiroVersionModified"
-                class="px-4 py-2 bg-app-accent hover:bg-app-accent/80 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
-              >
-                {{ t('backup.confirm') }}
-              </button>
             </div>
           </div>
         </div>
@@ -1058,18 +1138,24 @@ onMounted(() => {
                       ? t('message.tokenExpiredTip')
                       : t('backup.refresh')"
                   >
+                    <!-- 刷新中：旋轉圖標 -->
+                    <Icon 
+                      v-if="refreshingCurrent"
+                      name="RefreshCw" 
+                      class="w-3.5 h-3.5 animate-spin" 
+                    />
                     <!-- 倒計時數字 -->
                     <span 
-                      v-if="isCurrentInCooldown() && !refreshingCurrent" 
+                      v-else-if="isCurrentInCooldown()" 
                       class="text-xs font-mono font-medium leading-none"
                     >
                       {{ countdownCurrentAccount }}
                     </span>
-                    <!-- 刷新圖標 -->
+                    <!-- 正常狀態：靜態圖標 -->
                     <Icon 
                       v-else
                       name="RefreshCw" 
-                      :class="['w-3.5 h-3.5', refreshingCurrent ? 'animate-spin' : '']" 
+                      class="w-3.5 h-3.5" 
                     />
                   </button>
                 </template>
