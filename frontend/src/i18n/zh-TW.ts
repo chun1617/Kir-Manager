@@ -54,6 +54,7 @@ export default {
     confirm: '確認',
     local: 'Local',
     refresh: '刷新餘額',
+    regenerateId: '重新生成機器碼',
   },
   restore: {
     original: '還原出廠',
@@ -102,6 +103,7 @@ export default {
     confirmRestore: '警告：這將還原至原始狀態，確定嗎？',
     confirmReset: '警告：這將生成全新機器指紋並重置環境，確定嗎？',
     confirmDelete: '確定要刪除備份 {name} 嗎？',
+    confirmRegenerateId: '確定要為 {name} 生成新的機器碼嗎？這將使該快照使用全新的機器指紋。',
     restartKiro: '請重新啟動 Kiro 以套用變更',
     firstTimeResetTitle: '一鍵新機模式說明',
     firstTimeResetInfo: '您正在使用「軟一鍵新機」模式，此模式透過修改 Kiro 擴展來實現機器碼變更，跨平台支援且不需要管理員權限。',
@@ -109,5 +111,7 @@ export default {
     refreshSuccess: '餘額刷新成功',
     refreshFailed: '餘額刷新失敗',
     tokenExpiredTip: 'Token 已過期，點擊刷新以自動更新',
+    regenerateIdSuccess: '機器碼已重新生成',
+    regenerateIdFailed: '機器碼生成失敗',
   },
 }

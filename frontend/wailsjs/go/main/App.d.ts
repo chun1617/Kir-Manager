@@ -13,6 +13,8 @@ export function GetAppInfo():Promise<Record<string, string>>;
 
 export function GetBackupList():Promise<Array<main.BackupItem>>;
 
+export function GetCurrentEnvironmentName():Promise<string>;
+
 export function GetCurrentMachineID():Promise<string>;
 
 export function GetCurrentProvider():Promise<string>;
@@ -38,6 +40,8 @@ export function OpenMachineIDFolder():Promise<main.Result>;
 export function OpenSSOCacheFolder():Promise<main.Result>;
 
 export function RefreshBackupUsage(arg1:string):Promise<main.UsageCacheResult>;
+
+export function RegenerateMachineID(arg1:string):Promise<main.Result>;
 
 export function RepatchExtension():Promise<main.Result>;
 

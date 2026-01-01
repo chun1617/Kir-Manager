@@ -22,6 +22,10 @@ export function GetBackupList() {
   return window['go']['main']['App']['GetBackupList']();
 }
 
+export function GetCurrentEnvironmentName() {
+  return window['go']['main']['App']['GetCurrentEnvironmentName']();
+}
+
 export function GetCurrentMachineID() {
   return window['go']['main']['App']['GetCurrentMachineID']();
 }
@@ -72,6 +76,10 @@ export function OpenSSOCacheFolder() {
 
 export function RefreshBackupUsage(arg1) {
   return window['go']['main']['App']['RefreshBackupUsage'](arg1);
+}
+
+export function RegenerateMachineID(arg1) {
+  return window['go']['main']['App']['RegenerateMachineID'](arg1);
 }
 
 export function RepatchExtension() {

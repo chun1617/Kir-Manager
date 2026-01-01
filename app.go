@@ -312,21 +312,104 @@ func (a *App) DeleteBackup(name string) Result {
 	return Result{Success: true, Message: "刪除成功"}
 }
 
-// GetCurrentMachineID 取得當前 Machine ID
-// 如果有自訂 Machine ID，返回自訂 ID（不論 Patch 狀態）
-// 否則返回系統原始 Machine ID
-func (a *App) GetCurrentMachineID() string {
-	// 優先檢查軟重置的自訂 Machine ID
-	// 注意：只要有自訂 ID 就返回，不需要檢查 IsPatched
-	// 因為 IsPatched 可能因為找不到 extension.js 而失敗
-	status, err := softreset.GetSoftResetStatus()
-	if err == nil && status.HasCustomID {
-		return status.CustomMachineID
+// RegenerateMachineID 為指定備份生成新的機器碼
+func (a *App) RegenerateMachineID(name string) Result {
+	if name == "" {
+		return Result{Success: false, Message: "備份名稱不能為空"}
 	}
 
-	// 否則返回系統 Machine ID
+	if name == backup.OriginalBackupName {
+		return Result{Success: false, Message: "不能修改原始備份的機器碼"}
+	}
+
+	if !backup.BackupExists(name) {
+		return Result{Success: false, Message: "備份不存在"}
+	}
+
+	// 生成新的 Machine ID（UUID v4）
+	newMachineID := softreset.GenerateNewMachineID()
+
+	// 檢查該備份是否為當前使用中的環境（在更新前檢查）
+	currentEnvName := a.GetCurrentEnvironmentName()
+	isCurrent := currentEnvName == name
+
+	// 更新備份中的 Machine ID
+	if err := backup.UpdateBackupMachineID(name, newMachineID); err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("更新機器碼失敗: %v", err)}
+	}
+
+	// 如果當前環境使用的是這個備份，則同步更新 custom-machine-id
+	if isCurrent {
+		// 寫入原始 UUID（給 UI 顯示）
+		if err := softreset.WriteCustomMachineIDRaw(newMachineID); err != nil {
+			return Result{Success: false, Message: fmt.Sprintf("更新自訂機器碼失敗: %v", err)}
+		}
+
+		// 寫入 SHA256 雜湊值（給 Kiro 使用）
+		hashedMachineID := machineid.HashMachineID(newMachineID)
+		if err := softreset.WriteCustomMachineID(hashedMachineID); err != nil {
+			return Result{Success: false, Message: fmt.Sprintf("更新自訂機器碼雜湊失敗: %v", err)}
+		}
+
+		return Result{
+			Success: true,
+			Message: fmt.Sprintf("已生成新機器碼並同步更新當前環境: %s", newMachineID[:8]+"..."),
+		}
+	}
+
+	return Result{
+		Success: true,
+		Message: fmt.Sprintf("已生成新機器碼: %s", newMachineID[:8]+"..."),
+	}
+}
+
+// GetCurrentMachineID 取得當前 Machine ID
+// 優先順序：
+// 1. custom-machine-id-raw（原始 UUID，用於 UI 顯示）
+// 2. 系統原始 Machine ID
+// 注意：不使用 custom-machine-id（SHA256 雜湊值），因為那是給 Kiro 內部使用的
+func (a *App) GetCurrentMachineID() string {
+	// 優先讀取 custom-machine-id-raw（原始 UUID）
+	rawID, err := softreset.ReadCustomMachineIDRaw()
+	if err == nil && rawID != "" {
+		return rawID
+	}
+
+	// 否則返回系統原始 Machine ID
 	id, _ := machineid.GetRawMachineId()
 	return id
+}
+
+// GetCurrentEnvironmentName 取得當前運行環境的名稱
+// 根據當前 Machine ID 查找對應的環境快照名稱
+// 如果找不到對應的環境快照，返回空字串（前端顯示「原始機器」）
+func (a *App) GetCurrentEnvironmentName() string {
+	currentMachineID := a.GetCurrentMachineID()
+	if currentMachineID == "" {
+		return ""
+	}
+
+	// 遍歷所有備份，找到 Machine ID 匹配的備份
+	backups, err := backup.ListBackups()
+	if err != nil {
+		return ""
+	}
+
+	for _, b := range backups {
+		// 跳過 "original" 備份
+		if b.Name == backup.OriginalBackupName {
+			continue
+		}
+
+		if b.HasMachineID {
+			mid, err := backup.ReadBackupMachineID(b.Name)
+			if err == nil && mid.MachineID == currentMachineID {
+				return b.Name
+			}
+		}
+	}
+
+	return ""
 }
 
 // EnsureOriginalBackup 確保原始備份存在

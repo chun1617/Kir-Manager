@@ -54,7 +54,9 @@ declare global {
           SwitchToBackup(name: string): Promise<Result>
           RestoreSoftReset(): Promise<Result>
           DeleteBackup(name: string): Promise<Result>
+          RegenerateMachineID(name: string): Promise<Result>
           GetCurrentMachineID(): Promise<string>
+          GetCurrentEnvironmentName(): Promise<string>
           EnsureOriginalBackup(): Promise<Result>
           SoftResetToNewMachine(): Promise<Result>
           IsKiroRunning(): Promise<boolean>
@@ -94,6 +96,7 @@ declare global {
 
 const backups = ref<BackupItem[]>([])
 const currentMachineId = ref('')
+const currentEnvironmentName = ref('') // 當前運行環境的名稱（對應的環境快照名稱）
 const currentProvider = ref('') // 當前 Kiro 登入的帳號來源
 const currentUsageInfo = ref<CurrentUsageInfo | null>(null) // 當前帳號用量資訊
 const loading = ref(false)
@@ -252,6 +255,7 @@ const loadBackups = async () => {
   try {
     backups.value = await window.go.main.App.GetBackupList() || []
     currentMachineId.value = await window.go.main.App.GetCurrentMachineID()
+    currentEnvironmentName.value = await window.go.main.App.GetCurrentEnvironmentName()
     softResetStatus.value = await window.go.main.App.GetSoftResetStatus()
     currentProvider.value = await window.go.main.App.GetCurrentProvider()
     currentUsageInfo.value = await window.go.main.App.GetCurrentUsageInfo()
@@ -569,6 +573,28 @@ const deleteBackup = async (name: string) => {
     const result = await window.go.main.App.DeleteBackup(name)
     if (result.success) {
       showToast(t('message.success'), 'success')
+      await loadBackups()
+    } else {
+      showToast(result.message, 'error')
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+const regenerateMachineID = async (name: string) => {
+  const confirmed = await showConfirmDialog({
+    title: t('dialog.confirmTitle'),
+    message: t('message.confirmRegenerateId', { name }),
+    type: 'warning'
+  })
+  if (!confirmed) return
+  
+  loading.value = true
+  try {
+    const result = await window.go.main.App.RegenerateMachineID(name)
+    if (result.success) {
+      showToast(t('message.regenerateIdSuccess'), 'success')
       await loadBackups()
     } else {
       showToast(result.message, 'error')
@@ -1162,7 +1188,7 @@ onMounted(() => {
               </div>
               
               <h3 class="text-3xl font-bold text-white mb-1 glow-text">
-                {{ activeBackup?.name || t('status.originalMachine') }}
+                {{ currentEnvironmentName || t('status.originalMachine') }}
               </h3>
               <div class="flex items-center gap-2 text-app-accent font-mono text-sm mb-6">
                 <Icon name="Check" class="w-4 h-4" />
@@ -1477,6 +1503,13 @@ onMounted(() => {
                         class="text-xs bg-transparent border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white px-3 py-1.5 rounded transition-all"
                       >
                         {{ t('backup.switchTo') }}
+                      </button>
+                      <button 
+                        @click="regenerateMachineID(backup.name)"
+                        class="text-xs bg-transparent border border-zinc-700 hover:border-app-accent text-zinc-400 hover:text-app-accent px-2 py-1.5 rounded transition-all"
+                        :title="t('backup.regenerateId')"
+                      >
+                        <Icon name="RefreshCw" class="w-3 h-3" />
                       </button>
                       <button 
                         @click="deleteBackup(backup.name)"

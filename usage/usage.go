@@ -110,16 +110,18 @@ func CalculateBalanceWithThreshold(response *UsageLimitsResponse, threshold floa
 		totalUsageLimit += breakdown.UsageLimitWithPrecision
 		totalCurrentUsage += breakdown.CurrentUsageWithPrecision
 
-		// 免費試用額度（如果存在）
-		if breakdown.FreeTrialInfo != nil {
+		// 免費試用額度（如果存在且未過期）
+		if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus != "EXPIRED" {
 			totalUsageLimit += breakdown.FreeTrialInfo.UsageLimitWithPrecision
 			totalCurrentUsage += breakdown.FreeTrialInfo.CurrentUsageWithPrecision
 		}
 
-		// 獎勵額度（如果存在）
+		// 獎勵額度（如果存在且未耗盡）
 		for _, bonus := range breakdown.Bonuses {
-			totalUsageLimit += bonus.UsageLimit
-			totalCurrentUsage += bonus.CurrentUsage
+			if bonus.Status != "EXHAUSTED" {
+				totalUsageLimit += bonus.UsageLimit
+				totalCurrentUsage += bonus.CurrentUsage
+			}
 		}
 	}
 

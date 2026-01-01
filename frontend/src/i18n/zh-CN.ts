@@ -54,6 +54,7 @@ export default {
     confirm: '确认',
     local: 'Local',
     refresh: '刷新余额',
+    regenerateId: '重新生成机器码',
   },
   restore: {
     original: '还原出厂',
@@ -102,6 +103,7 @@ export default {
     confirmRestore: '警告：这将还原至原始状态，确定吗？',
     confirmReset: '警告：这将生成全新机器指纹并重置环境，确定吗？',
     confirmDelete: '确定要删除备份 {name} 吗？',
+    confirmRegenerateId: '确定要为 {name} 生成新的机器码吗？这将使该快照使用全新的机器指纹。',
     restartKiro: '请重新启动 Kiro 以应用变更',
     firstTimeResetTitle: '一键新机模式说明',
     firstTimeResetInfo: '您正在使用「软一键新机」模式，此模式通过修改 Kiro 扩展来实现机器码变更，跨平台支持且不需要管理员权限。',
@@ -109,5 +111,7 @@ export default {
     refreshSuccess: '余额刷新成功',
     refreshFailed: '余额刷新失败',
     tokenExpiredTip: 'Token 已过期，点击刷新以自动更新',
+    regenerateIdSuccess: '机器码已重新生成',
+    regenerateIdFailed: '机器码生成失败',
   },
 }

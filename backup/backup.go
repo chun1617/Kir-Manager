@@ -12,6 +12,7 @@ import (
 
 	"kiro-manager/awssso"
 	"kiro-manager/machineid"
+	"kiro-manager/softreset"
 )
 
 const (
@@ -327,6 +328,23 @@ func RestoreBackup(name string) error {
 					}
 				}
 			}
+		}
+	}
+
+	// 恢復 Machine ID（寫入 custom-machine-id 和 custom-machine-id-raw）
+	machineIDBackup, err := ReadBackupMachineID(name)
+	if err == nil && machineIDBackup != nil && machineIDBackup.MachineID != "" {
+		rawMachineID := machineIDBackup.MachineID
+
+		// 寫入原始 UUID（給 UI 顯示）
+		if err := softreset.WriteCustomMachineIDRaw(rawMachineID); err != nil {
+			return fmt.Errorf("failed to restore custom machine id raw: %w", err)
+		}
+
+		// 寫入 SHA256 雜湊值（給 Kiro 使用）
+		hashedMachineID := machineid.HashMachineID(rawMachineID)
+		if err := softreset.WriteCustomMachineID(hashedMachineID); err != nil {
+			return fmt.Errorf("failed to restore custom machine id: %w", err)
 		}
 	}
 
@@ -708,4 +726,42 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// UpdateBackupMachineID 更新備份中的 Machine ID
+// 用於為指定備份生成新的機器碼
+func UpdateBackupMachineID(name string, newMachineID string) error {
+	if name == "" {
+		return ErrInvalidBackupName
+	}
+
+	if newMachineID == "" {
+		return fmt.Errorf("new machine id cannot be empty")
+	}
+
+	if !BackupExists(name) {
+		return ErrBackupNotFound
+	}
+
+	backupPath, err := GetBackupPath(name)
+	if err != nil {
+		return err
+	}
+
+	machineIDBackup := MachineIDBackup{
+		MachineID:  newMachineID,
+		BackupTime: time.Now().Format(time.RFC3339),
+	}
+
+	machineIDData, err := json.MarshalIndent(machineIDBackup, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal machine id: %w", err)
+	}
+
+	machineIDPath := filepath.Join(backupPath, MachineIDFileName)
+	if err := os.WriteFile(machineIDPath, machineIDData, 0644); err != nil {
+		return fmt.Errorf("failed to write machine id: %w", err)
+	}
+
+	return nil
 }
