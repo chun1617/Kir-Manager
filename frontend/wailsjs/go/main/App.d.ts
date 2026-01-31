@@ -5,6 +5,8 @@ import {kiroprocess} from '../models';
 
 export function CreateBackup(arg1:string):Promise<main.Result>;
 
+export function CreateSnapshotFromOAuth(arg1:string,arg2:main.OAuthLoginResult):Promise<main.Result>;
+
 export function DeleteBackup(arg1:string):Promise<main.Result>;
 
 export function EnsureOriginalBackup():Promise<main.Result>;
@@ -35,6 +37,8 @@ export function GetSoftResetStatus():Promise<main.SoftResetStatus>;
 
 export function GetWindowSize():Promise<main.WindowSize>;
 
+export function IsDeepLinkSupported():Promise<boolean>;
+
 export function IsKiroRunning():Promise<boolean>;
 
 export function OpenExtensionFolder():Promise<main.Result>;
@@ -57,6 +61,12 @@ export function SaveWindowSize(arg1:number,arg2:number):Promise<main.Result>;
 
 export function SoftResetToNewMachine():Promise<main.Result>;
 
+export function StartIdCLogin():Promise<main.OAuthLoginResult>;
+
+export function StartSocialLogin(arg1:string):Promise<main.OAuthLoginResult>;
+
 export function SwitchToBackup(arg1:string):Promise<main.Result>;
 
 export function UnpatchExtension():Promise<main.Result>;
+
+export function ValidateSnapshotName(arg1:string):Promise<main.Result>;

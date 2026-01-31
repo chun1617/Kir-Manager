@@ -99,6 +99,40 @@ export namespace main {
 	        this.isLowBalance = source["isLowBalance"];
 	    }
 	}
+	export class OAuthLoginResult {
+	    success: boolean;
+	    message: string;
+	    accessToken?: string;
+	    refreshToken?: string;
+	    expiresAt?: string;
+	    provider?: string;
+	    authMethod?: string;
+	    clientId?: string;
+	    clientSecret?: string;
+	    clientIdHash?: string;
+	    userCode?: string;
+	    verificationUri?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OAuthLoginResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.accessToken = source["accessToken"];
+	        this.refreshToken = source["refreshToken"];
+	        this.expiresAt = source["expiresAt"];
+	        this.provider = source["provider"];
+	        this.authMethod = source["authMethod"];
+	        this.clientId = source["clientId"];
+	        this.clientSecret = source["clientSecret"];
+	        this.clientIdHash = source["clientIdHash"];
+	        this.userCode = source["userCode"];
+	        this.verificationUri = source["verificationUri"];
+	    }
+	}
 	export class PathDetectionResult {
 	    path: string;
 	    success: boolean;

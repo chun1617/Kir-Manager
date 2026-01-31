@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'Layers' | 'Cpu' | 'Refresh' | 'RefreshCw' | 'Save' | 'Rotate' | 'Sparkles' | 'Check' | 'Trash' | 'Search' | 'Github' | 'AWS' | 'Google' | 'AlertTriangle' | 'Copy' | 'FolderOpen' | 'Settings' | 'Globe' | 'Tag' | 'Home' | 'Database' | 'Loader' | 'Info' | 'Download' | 'Key' | 'CheckCircle' | 'XCircle' | 'ChevronDown'
+  name: 'Layers' | 'Cpu' | 'Refresh' | 'RefreshCw' | 'Save' | 'Rotate' | 'Sparkles' | 'Check' | 'Trash' | 'Search' | 'Github' | 'AWS' | 'Google' | 'AlertTriangle' | 'Copy' | 'FolderOpen' | 'Settings' | 'Globe' | 'Tag' | 'Home' | 'Database' | 'Loader' | 'Info' | 'Download' | 'Key' | 'CheckCircle' | 'XCircle' | 'ChevronDown' | 'Menu' | 'X'
   class?: string | string[]
 }>()
 </script>
@@ -144,6 +144,15 @@ defineProps<{
     </template>
     <template v-else-if="name === 'ChevronDown'">
       <polyline points="6 9 12 15 18 9" />
+    </template>
+    <template v-else-if="name === 'Menu'">
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </template>
+    <template v-else-if="name === 'X'">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </template>
   </svg>
 </template>

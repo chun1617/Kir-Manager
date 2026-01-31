@@ -780,3 +780,182 @@ func UpdateBackupMachineID(name string, newMachineID string) error {
 
 	return nil
 }
+
+
+// ============================================================================
+// OAuth Snapshot Support (Task 9)
+// ============================================================================
+
+// OAuthBackupData OAuth 登入備份資料結構
+type OAuthBackupData struct {
+	AccessToken  string    // 存取令牌
+	RefreshToken string    // 刷新令牌
+	ExpiresAt    time.Time // 過期時間
+	ProfileArn   string    // AWS Profile ARN (Social 登入)
+	Provider     string    // 提供者 (Github/Google/BuilderID)
+	AuthMethod   string    // 認證方式 (social/idc)
+	ClientId     string    // IdC 客戶端 ID (僅 IdC)
+	ClientSecret string    // IdC 客戶端密鑰 (僅 IdC)
+	ClientIdHash string    // IdC 客戶端 ID 雜湊 (僅 IdC)
+}
+
+// IdCCreds IdC 客戶端憑證結構
+type IdCCreds struct {
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+}
+
+// illegalSnapshotNameChars 快照名稱中不允許的字元
+var illegalSnapshotNameChars = []rune{'/', '\\', ':', '*', '?', '"', '<', '>', '|'}
+
+// ValidateSnapshotName 驗證快照名稱是否有效
+// 返回 nil 表示有效，否則返回錯誤
+// 規則：
+// - 不可為空
+// - 不可包含非法字元：/ \ : * ? " < > |
+// - 不可與現有快照重複
+func ValidateSnapshotName(name string) error {
+	// 規則 9.1: 不可為空
+	if name == "" {
+		return ErrInvalidBackupName
+	}
+
+	// 規則 9.2: 不可包含非法字元
+	for _, char := range name {
+		for _, illegal := range illegalSnapshotNameChars {
+			if char == illegal {
+				return fmt.Errorf("%w: contains illegal character '%c'", ErrInvalidBackupName, char)
+			}
+		}
+	}
+
+	// 規則 9.3: 不可與現有快照重複
+	if BackupExists(name) {
+		return ErrBackupExists
+	}
+
+	return nil
+}
+
+// oauthKiroAuthToken 用於 OAuth 快照的 token 結構
+// 確保 JSON key 順序: accessToken, refreshToken, profileArn, expiresAt, authMethod, provider, clientIdHash
+type oauthKiroAuthToken struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ProfileArn   string `json:"profileArn"`
+	ExpiresAt    string `json:"expiresAt"`
+	AuthMethod   string `json:"authMethod"`
+	Provider     string `json:"provider"`
+	ClientIdHash string `json:"clientIdHash,omitempty"`
+}
+
+// CreateBackupFromOAuth 從 OAuth 登入結果建立環境快照
+// 參數：
+//   - name: 快照名稱
+//   - data: OAuth 登入資料
+//
+// 返回：錯誤或 nil
+//
+// 建立的檔案：
+// - kiro-auth-token.json: 包含 accessToken, refreshToken, expiresAt, provider, authMethod, profileArn
+// - machine-id.json: 包含當前 Machine ID
+// - {clientIdHash}.json: (僅 IdC) 包含 clientId, clientSecret
+func CreateBackupFromOAuth(name string, data *OAuthBackupData) error {
+	// 驗證快照名稱
+	if err := ValidateSnapshotName(name); err != nil {
+		return err
+	}
+
+	if data == nil {
+		return fmt.Errorf("oauth data cannot be nil")
+	}
+
+	// 確保備份根目錄存在
+	_, err := ensureBackupRoot()
+	if err != nil {
+		return fmt.Errorf("failed to create backup root: %w", err)
+	}
+
+	// 創建備份資料夾
+	backupPath, err := GetBackupPath(name)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		return fmt.Errorf("failed to create backup directory: %w", err)
+	}
+
+	// 建立 kiro-auth-token.json
+	token := oauthKiroAuthToken{
+		AccessToken:  data.AccessToken,
+		RefreshToken: data.RefreshToken,
+		ProfileArn:   data.ProfileArn,
+		ExpiresAt:    data.ExpiresAt.Format(time.RFC3339),
+		AuthMethod:   data.AuthMethod,
+		Provider:     data.Provider,
+	}
+
+	// 如果是 IdC，加入 clientIdHash
+	if isIdCAuth(data.AuthMethod) && data.ClientIdHash != "" {
+		token.ClientIdHash = data.ClientIdHash
+	}
+
+	tokenJSON, err := json.MarshalIndent(token, "", "  ")
+	if err != nil {
+		os.RemoveAll(backupPath)
+		return fmt.Errorf("failed to marshal token: %w", err)
+	}
+
+	tokenPath := filepath.Join(backupPath, KiroAuthTokenFile)
+	if err := os.WriteFile(tokenPath, tokenJSON, 0644); err != nil {
+		os.RemoveAll(backupPath)
+		return fmt.Errorf("failed to write token file: %w", err)
+	}
+
+	// 建立 machine-id.json
+	rawMachineID, err := getCurrentMachineID()
+	if err != nil {
+		os.RemoveAll(backupPath)
+		return fmt.Errorf("failed to get machine id: %w", err)
+	}
+
+	machineIDBackup := MachineIDBackup{
+		MachineID:  rawMachineID,
+		BackupTime: time.Now().Format(time.RFC3339),
+	}
+
+	machineIDData, err := json.MarshalIndent(machineIDBackup, "", "  ")
+	if err != nil {
+		os.RemoveAll(backupPath)
+		return fmt.Errorf("failed to marshal machine id: %w", err)
+	}
+
+	machineIDPath := filepath.Join(backupPath, MachineIDFileName)
+	if err := os.WriteFile(machineIDPath, machineIDData, 0644); err != nil {
+		os.RemoveAll(backupPath)
+		return fmt.Errorf("failed to write machine id: %w", err)
+	}
+
+	// 如果是 IdC，建立 clientIdHash.json
+	if isIdCAuth(data.AuthMethod) && data.ClientIdHash != "" {
+		idcCreds := IdCCreds{
+			ClientId:     data.ClientId,
+			ClientSecret: data.ClientSecret,
+		}
+
+		idcCredsJSON, err := json.MarshalIndent(idcCreds, "", "  ")
+		if err != nil {
+			os.RemoveAll(backupPath)
+			return fmt.Errorf("failed to marshal idc credentials: %w", err)
+		}
+
+		idcCredsPath := filepath.Join(backupPath, data.ClientIdHash+".json")
+		if err := os.WriteFile(idcCredsPath, idcCredsJSON, 0644); err != nil {
+			os.RemoveAll(backupPath)
+			return fmt.Errorf("failed to write idc credentials: %w", err)
+		}
+	}
+
+	return nil
+}

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from './components/Icon.vue'
+import OAuthLogin from './components/OAuthLogin.vue'
 
 const { t, locale } = useI18n()
 
@@ -169,7 +170,8 @@ const setFilterBalance = (value: string) => {
 }
 const showFirstTimeResetModal = ref(false)
 const showSettingsPanel = ref(false)
-const activeMenu = ref<'dashboard' | 'settings'>('dashboard')
+const activeMenu = ref<'dashboard' | 'settings' | 'oauth'>('dashboard')
+const isMobileMenuOpen = ref(false) // 移動端菜單開關狀態
 const resetting = ref(false) // 一鍵新機進行中狀態
 const refreshingBackup = ref<string | null>(null) // 正在刷新餘額的備份名稱
 const refreshingCurrent = ref(false) // 正在刷新當前帳號餘額
@@ -1072,13 +1074,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-screen bg-app-bg font-sans text-sm text-zinc-300">
+  <div class="flex flex-col h-screen bg-app-bg font-sans text-sm text-zinc-300">
     
-    <!-- 左側邊欄 -->
-    <aside class="w-[220px] flex-shrink-0 border-r border-app-border flex flex-col bg-[#0c0c0e]">
-      <div class="h-16 flex items-center px-6 border-b border-app-border">
-        <!-- Kiro Logo SVG -->
-        <svg width="28" height="28" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" class="mr-3 flex-shrink-0">
+    <!-- 頂部導航欄 -->
+    <header class="h-16 flex-shrink-0 border-b border-app-border flex items-center justify-between px-6 bg-[#0c0c0e] sticky top-0 z-20">
+      <!-- 左側：Logo + 導航項 -->
+      <div class="flex items-center gap-6">
+        <!-- Logo (只保留 SVG，移除文字) -->
+        <svg width="28" height="28" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" class="flex-shrink-0">
           <defs>
             <linearGradient id="bgGradient" x1="0%" y1="0%" x2="0%" y2="100%">
               <stop offset="0%" style="stop-color:#2b3245;stop-opacity:1" />
@@ -1113,12 +1116,77 @@ onUnmounted(() => {
             </rect>
           </g>
         </svg>
-        <span class="font-bold text-lg tracking-tight text-white">{{ t('app.name') }}</span>
+        
+        <!-- 桌面版水平導航項 (md:flex) -->
+        <nav class="hidden md:flex items-center gap-1">
+          <div 
+            @click="activeMenu = 'dashboard'; showSettingsPanel = false"
+            :class="[
+              'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
+              activeMenu === 'dashboard' 
+                ? 'text-zinc-100 bg-zinc-800/50 border border-zinc-700/50' 
+                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
+            ]"
+          >
+            <Icon name="Home" :class="['w-4 h-4 mr-2', activeMenu === 'dashboard' ? 'text-app-accent' : '']" />
+            {{ t('menu.dashboard') }}
+          </div>
+          <div 
+            @click="activeMenu = 'oauth'; showSettingsPanel = false"
+            :class="[
+              'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
+              activeMenu === 'oauth' 
+                ? 'text-zinc-100 bg-zinc-800/50 border border-zinc-700/50' 
+                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
+            ]"
+          >
+            <Icon name="Key" :class="['w-4 h-4 mr-2', activeMenu === 'oauth' ? 'text-app-accent' : '']" />
+            {{ t('menu.oauthLogin') }}
+          </div>
+          <div 
+            @click="activeMenu = 'settings'; showSettingsPanel = true"
+            :class="[
+              'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
+              activeMenu === 'settings' 
+                ? 'text-zinc-100 bg-zinc-800/50 border border-zinc-700/50' 
+                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
+            ]"
+          >
+            <Icon name="Settings" :class="['w-4 h-4 mr-2', activeMenu === 'settings' ? 'text-app-accent' : '']" />
+            {{ t('menu.settings') }}
+          </div>
+        </nav>
+        
+        <!-- 移動版漢堡菜單按鈕 (md:hidden) -->
+        <button 
+          @click="isMobileMenuOpen = !isMobileMenuOpen"
+          class="md:hidden p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+        >
+          <Icon :name="isMobileMenuOpen ? 'X' : 'Menu'" class="w-5 h-5" />
+        </button>
       </div>
       
-      <nav class="flex-1 p-4 space-y-1">
+      <!-- 右側：狀態指示器 + 版本信息 -->
+      <div class="flex flex-col items-end">
+        <div class="flex items-center gap-2">
+          <div :class="['w-2 h-2 rounded-full', loading ? 'bg-yellow-500 animate-pulse' : kiroRunning ? 'bg-green-500' : 'bg-zinc-500']"></div>
+          <span class="text-xs text-zinc-400 font-mono">{{ loading ? t('app.processing') : kiroRunning ? t('app.kiroRunning') : t('app.kiroStopped') }}</span>
+        </div>
+        <p class="text-zinc-500 text-xs">{{ t('app.version') }}</p>
+      </div>
+    </header>
+    
+    <!-- 移動端下拉菜單 -->
+    <div v-if="isMobileMenuOpen" class="md:hidden relative z-10">
+      <!-- Backdrop 遮罩 -->
+      <div 
+        class="fixed inset-0 bg-black/50" 
+        @click="isMobileMenuOpen = false"
+      ></div>
+      <!-- 下拉菜單內容 -->
+      <nav class="relative bg-[#0c0c0e] border-b border-app-border p-4 space-y-1">
         <div 
-          @click="activeMenu = 'dashboard'; showSettingsPanel = false"
+          @click="activeMenu = 'dashboard'; showSettingsPanel = false; isMobileMenuOpen = false"
           :class="[
             'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
             activeMenu === 'dashboard' 
@@ -1130,7 +1198,19 @@ onUnmounted(() => {
           {{ t('menu.dashboard') }}
         </div>
         <div 
-          @click="activeMenu = 'settings'; showSettingsPanel = true"
+          @click="activeMenu = 'oauth'; showSettingsPanel = false; isMobileMenuOpen = false"
+          :class="[
+            'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
+            activeMenu === 'oauth' 
+              ? 'text-zinc-100 bg-zinc-800/50 border border-zinc-700/50' 
+              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
+          ]"
+        >
+          <Icon name="Key" :class="['w-4 h-4 mr-3', activeMenu === 'oauth' ? 'text-app-accent' : '']" />
+          {{ t('menu.oauthLogin') }}
+        </div>
+        <div 
+          @click="activeMenu = 'settings'; showSettingsPanel = true; isMobileMenuOpen = false"
           :class="[
             'px-3 py-2 rounded-lg flex items-center cursor-pointer transition-colors',
             activeMenu === 'settings' 
@@ -1142,22 +1222,10 @@ onUnmounted(() => {
           {{ t('menu.settings') }}
         </div>
       </nav>
+    </div>
 
-    </aside>
-
-    <!-- 右側主內容 -->
+    <!-- 主內容區 -->
     <main class="flex-1 flex flex-col min-w-0 overflow-hidden bg-app-bg relative">
-      <!-- 頂部標題列 -->
-      <header class="h-16 border-b border-app-border flex items-center justify-between px-8 glass sticky top-0 z-10">
-        <div>
-          <h2 class="text-white font-semibold text-lg">{{ showSettingsPanel ? t('settings.title') : t('menu.dashboard') }}</h2>
-          <p class="text-zinc-500 text-xs">{{ t('app.systemReady') }} • {{ t('app.version') }}</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <div :class="['w-2 h-2 rounded-full', loading ? 'bg-yellow-500 animate-pulse' : kiroRunning ? 'bg-green-500' : 'bg-zinc-500']"></div>
-          <span class="text-xs text-zinc-400 font-mono">{{ loading ? t('app.processing') : kiroRunning ? t('app.kiroRunning') : t('app.kiroStopped') }}</span>
-        </div>
-      </header>
 
       <!-- 內容滾動區 -->
       <div class="flex-1 overflow-y-auto p-8 space-y-8">
@@ -1331,6 +1399,11 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </div>
+        
+        <!-- OAuth 登入頁面 -->
+        <div v-else-if="activeMenu === 'oauth'" class="space-y-6">
+          <OAuthLogin @snapshot-created="loadBackups(false)" />
         </div>
         
         <!-- Dashboard 內容 -->
