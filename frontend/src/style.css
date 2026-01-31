@@ -27,3 +27,115 @@
 .glow-text {
   text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
 }
+
+/* 自定義 Checkbox 樣式 */
+.custom-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1.5px solid #52525b;
+  border-radius: 0.25rem;
+  background-color: #27272a;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.custom-checkbox:hover {
+  border-color: #8b5cf6;
+  background-color: #3f3f46;
+}
+
+.custom-checkbox:checked {
+  background-color: #8b5cf6;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+}
+
+.custom-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.custom-checkbox:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+}
+
+/* 自定義 Select 下拉選單樣式 */
+.custom-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  border: none;
+  color: #71717a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  padding-right: 1.25rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0 center;
+  transition: all 0.2s ease;
+}
+
+.custom-select:hover {
+  color: #d4d4d8;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b5cf6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.custom-select:focus {
+  outline: none;
+  color: #8b5cf6;
+  text-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b5cf6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+/* 當有選中篩選值時的高亮狀態 */
+.custom-select.active {
+  color: #8b5cf6;
+  text-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b5cf6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.custom-select option {
+  background-color: #18181b;
+  color: #d4d4d8;
+  padding: 0.5rem;
+}
+
+.custom-select option:checked {
+  background-color: #8b5cf6;
+  color: white;
+}
+
+/* 篩選器 glow 效果 */
+.filter-glow {
+  text-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+}
+
+/* 快速脈搏動畫（用於重新生成機器碼） */
+@keyframes pulse-fast {
+  0%, 100% { 
+    opacity: 1; 
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 0.5; 
+    transform: scale(1.3);
+  }
+}
+
+.animate-pulse-fast {
+  animation: pulse-fast 0.3s ease-in-out infinite;
+}

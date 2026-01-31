@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'Layers' | 'Cpu' | 'Refresh' | 'RefreshCw' | 'Save' | 'Rotate' | 'Sparkles' | 'Check' | 'Trash' | 'Search' | 'Github' | 'AWS' | 'Google' | 'AlertTriangle' | 'Copy' | 'FolderOpen' | 'Settings' | 'Globe' | 'Tag' | 'Home' | 'Database' | 'Loader' | 'Info'
+  name: 'Layers' | 'Cpu' | 'Refresh' | 'RefreshCw' | 'Save' | 'Rotate' | 'Sparkles' | 'Check' | 'Trash' | 'Search' | 'Github' | 'AWS' | 'Google' | 'AlertTriangle' | 'Copy' | 'FolderOpen' | 'Settings' | 'Globe' | 'Tag' | 'Home' | 'Database' | 'Loader' | 'Info' | 'Download' | 'Key' | 'CheckCircle' | 'XCircle' | 'ChevronDown'
   class?: string | string[]
 }>()
 </script>
@@ -124,6 +124,26 @@ defineProps<{
       <circle cx="12" cy="12" r="10" />
       <line x1="12" y1="16" x2="12" y2="12" />
       <line x1="12" y1="8" x2="12.01" y2="8" />
+    </template>
+    <template v-else-if="name === 'Download'">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </template>
+    <template v-else-if="name === 'Key'">
+      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </template>
+    <template v-else-if="name === 'CheckCircle'">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </template>
+    <template v-else-if="name === 'XCircle'">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="15" y1="9" x2="9" y2="15" />
+      <line x1="9" y1="9" x2="15" y2="15" />
+    </template>
+    <template v-else-if="name === 'ChevronDown'">
+      <polyline points="6 9 12 15 18 9" />
     </template>
   </svg>
 </template>

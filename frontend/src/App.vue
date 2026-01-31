@@ -1,9 +1,31 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from './components/Icon.vue'
 
 const { t, locale } = useI18n()
+
+// Debounce 工具函數
+function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  return (...args: Parameters<T>) => {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}
+
+// 保存視窗大小（debounced 500ms）
+const saveWindowSize = debounce(() => {
+  const width = window.outerWidth;
+  const height = window.outerHeight;
+  // 調用後端 SaveWindowSize 函數（需要後端實作）
+  if (window.go?.main?.App?.SaveWindowSize) {
+    window.go.main.App.SaveWindowSize(width, height);
+  }
+}, 500);
 
 interface BackupItem {
   name: string
@@ -42,6 +64,14 @@ interface AppSettings {
   kiroVersion: string
   useAutoDetect: boolean
   customKiroInstallPath: string
+}
+
+// PathDetectionResult 路徑偵測結果
+interface PathDetectionResult {
+  path: string
+  success: boolean
+  triedStrategies?: string[]
+  failureReasons?: Record<string, string>
 }
 
 declare global {
@@ -84,10 +114,12 @@ declare global {
           SaveSettings(settings: AppSettings): Promise<Result>
           GetDetectedKiroVersion(): Promise<Result>
           GetDetectedKiroInstallPath(): Promise<Result>
+          GetKiroInstallPathWithStatus(): Promise<PathDetectionResult>
           OpenExtensionFolder(): Promise<Result>
           OpenMachineIDFolder(): Promise<Result>
           OpenSSOCacheFolder(): Promise<Result>
           RepatchExtension(): Promise<Result>
+          SaveWindowSize(width: number, height: number): Promise<Result>
         }
       }
     }
@@ -104,6 +136,11 @@ const kiroRunning = ref(false)
 const showCreateModal = ref(false)
 const newBackupName = ref('')
 const searchQuery = ref('')
+const filterSubscription = ref<string>('')
+const filterProvider = ref<string>('')
+const filterBalance = ref<string>('')
+// 篩選下拉選單開關狀態
+const openFilter = ref<string | null>(null)
 const toast = ref<{ show: boolean; message: string; type: 'success' | 'error' }>({
   show: false,
   message: '',
@@ -113,6 +150,23 @@ const toast = ref<{ show: boolean; message: string; type: 'success' | 'error' }>
 // 一鍵新機模式相關
 const resetMode = ref<'soft'>('soft')
 const hasUsedReset = ref(false)
+
+// 篩選下拉選單控制
+const toggleFilter = (name: string) => {
+  openFilter.value = openFilter.value === name ? null : name
+}
+const setFilterProvider = (value: string) => {
+  filterProvider.value = value
+  openFilter.value = null
+}
+const setFilterSubscription = (value: string) => {
+  filterSubscription.value = value
+  openFilter.value = null
+}
+const setFilterBalance = (value: string) => {
+  filterBalance.value = value
+  openFilter.value = null
+}
 const showFirstTimeResetModal = ref(false)
 const showSettingsPanel = ref(false)
 const activeMenu = ref<'dashboard' | 'settings'>('dashboard')
@@ -120,6 +174,17 @@ const resetting = ref(false) // 一鍵新機進行中狀態
 const refreshingBackup = ref<string | null>(null) // 正在刷新餘額的備份名稱
 const refreshingCurrent = ref(false) // 正在刷新當前帳號餘額
 const patching = ref(false) // Extension Patch 進行中狀態
+
+// 批量操作相關狀態
+const selectedBackups = ref<Set<string>>(new Set())
+const batchOperating = ref(false)
+
+// 獨立操作狀態（取代全屏 loading 覆蓋層）
+const creatingBackup = ref(false)        // 建立備份進行中
+const switchingBackup = ref<string | null>(null)  // 正在切換的備份名稱
+const restoringOriginal = ref(false)     // 還原原始機器進行中
+const deletingBackup = ref<string | null>(null)   // 正在刪除的備份名稱
+const regeneratingId = ref<string | null>(null)   // 正在重新生成機器碼的備份名稱
 
 // 刷新冷卻期（60 秒）
 const REFRESH_COOLDOWN_SECONDS = 60
@@ -129,7 +194,7 @@ const copiedMachineId = ref<string | null>(null) // 剛複製的機器碼 ID（�
 const countdownTimers = ref<Record<string, number>>({})
 const countdownCurrentAccount = ref(0) // 當前帳號的倒計時秒數
 
-// 軟重置狀態
+// 重置狀態
 const softResetStatus = ref<{
   isPatched: boolean
   hasCustomId: boolean
@@ -147,13 +212,13 @@ const softResetStatus = ref<{
 // 全域設定
 const appSettings = ref<AppSettings>({
   lowBalanceThreshold: 0.2,
-  kiroVersion: '0.7.5',
+  kiroVersion: '0.8.206',
   useAutoDetect: true,
   customKiroInstallPath: ''
 })
 
 // Kiro 版本號輸入值
-const kiroVersionInput = ref('0.7.5')
+const kiroVersionInput = ref('0.8.206')
 // 追蹤版本號是否被用戶手動修改（用於控制確認按鍵狀態）
 const kiroVersionModified = ref(false)
 
@@ -221,14 +286,129 @@ const activeBackup = computed(() => {
 })
 
 const filteredBackups = computed(() => {
-  if (!searchQuery.value.trim()) return backups.value
-  const query = searchQuery.value.toLowerCase()
-  return backups.value.filter(b => 
-    b.name.toLowerCase().includes(query) ||
-    b.machineId?.toLowerCase().includes(query) ||
-    b.provider?.toLowerCase().includes(query)
-  )
+  let result = backups.value
+
+  // 1. 訂閱方案篩選（精確匹配）
+  if (filterSubscription.value) {
+    const subscriptionMap: Record<string, string> = {
+      'FREE': 'KIRO FREE',
+      'PRO': 'KIRO PRO',
+      'PRO+': 'KIRO PRO+',
+      'POWER': 'KIRO POWER'
+    }
+    const target = subscriptionMap[filterSubscription.value]
+    result = result.filter(b => b.subscriptionTitle?.toUpperCase() === target)
+  }
+
+  // 2. 來源篩選（AWS 含 BuilderId）
+  if (filterProvider.value) {
+    if (filterProvider.value === 'AWS') {
+      result = result.filter(b => b.provider === 'AWS' || b.provider === 'BuilderId')
+    } else {
+      result = result.filter(b => b.provider === filterProvider.value)
+    }
+  }
+
+  // 3. 餘額篩選
+  if (filterBalance.value) {
+    if (filterBalance.value === 'LOW') {
+      result = result.filter(b => b.usageLimit > 0 && b.isLowBalance)
+    } else if (filterBalance.value === 'NORMAL') {
+      result = result.filter(b => b.usageLimit > 0 && !b.isLowBalance)
+    } else if (filterBalance.value === 'NO_DATA') {
+      result = result.filter(b => b.usageLimit === 0)
+    }
+  }
+
+  // 4. 文字搜尋（現有邏輯）
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(b => 
+      b.name.toLowerCase().includes(query) ||
+      b.machineId?.toLowerCase().includes(query) ||
+      b.provider?.toLowerCase().includes(query)
+    )
+  }
+
+  return result
 })
+
+// 批量操作：切換單一選擇
+const toggleSelect = (name: string) => {
+  const newSet = new Set(selectedBackups.value)
+  if (newSet.has(name)) {
+    newSet.delete(name)
+  } else {
+    newSet.add(name)
+  }
+  selectedBackups.value = newSet
+}
+
+// 批量操作：全選/取消全選
+const toggleSelectAll = () => {
+  if (selectedBackups.value.size === filteredBackups.value.length) {
+    selectedBackups.value = new Set()
+  } else {
+    selectedBackups.value = new Set(filteredBackups.value.map(b => b.name))
+  }
+}
+
+// 計算屬性：是否全選
+const isAllSelected = computed(() => 
+  filteredBackups.value.length > 0 && 
+  selectedBackups.value.size === filteredBackups.value.length
+)
+
+// 計算屬性：是否有選中項目
+const hasSelection = computed(() => selectedBackups.value.size > 0)
+
+// 批量刪除
+const batchDelete = async () => {
+  if (!hasSelection.value || batchOperating.value) return
+  batchOperating.value = true
+  try {
+    for (const name of selectedBackups.value) {
+      await window.go.main.App.DeleteBackup(name)
+    }
+    selectedBackups.value = new Set()
+    await loadBackups(false)
+    showToast(t('message.success'), 'success')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+// 批量刷新機器碼
+const batchRegenerateMachineID = async () => {
+  if (!hasSelection.value || batchOperating.value) return
+  batchOperating.value = true
+  try {
+    for (const name of selectedBackups.value) {
+      await window.go.main.App.RegenerateMachineID(name)
+    }
+    selectedBackups.value = new Set()
+    await loadBackups(false)
+    showToast(t('message.success'), 'success')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+// 批量刷新餘額（序列執行）
+const batchRefreshUsage = async () => {
+  if (!hasSelection.value || batchOperating.value) return
+  batchOperating.value = true
+  try {
+    const toRefresh = [...selectedBackups.value].filter(name => !isInCooldown(name))
+    for (const name of toRefresh) {
+      await refreshBackupUsage(name)
+    }
+    selectedBackups.value = new Set()
+    showToast(t('message.success'), 'success')
+  } finally {
+    batchOperating.value = false
+  }
+}
 
 const switchLanguage = (lang: string) => {
   locale.value = lang
@@ -250,8 +430,10 @@ const checkKiroStatus = async () => {
   }
 }
 
-const loadBackups = async () => {
-  loading.value = true
+const loadBackups = async (showOverlay: boolean = true) => {
+  if (showOverlay) {
+    loading.value = true
+  }
   try {
     backups.value = await window.go.main.App.GetBackupList() || []
     currentMachineId.value = await window.go.main.App.GetCurrentMachineID()
@@ -261,7 +443,7 @@ const loadBackups = async () => {
     currentUsageInfo.value = await window.go.main.App.GetCurrentUsageInfo()
     appSettings.value = await window.go.main.App.GetSettings()
     thresholdPreview.value = Math.round(appSettings.value.lowBalanceThreshold * 100)
-    kiroVersionInput.value = appSettings.value.kiroVersion || '0.7.5'
+    kiroVersionInput.value = appSettings.value.kiroVersion || '0.8.206'
     kiroVersionModified.value = false // 重置修改狀態
     kiroInstallPathInput.value = appSettings.value.customKiroInstallPath || ''
     kiroInstallPathModified.value = false // 重置修改狀態
@@ -269,7 +451,9 @@ const loadBackups = async () => {
   } catch (e) {
     console.error(e)
   } finally {
-    loading.value = false
+    if (showOverlay) {
+      loading.value = false
+    }
   }
 }
 
@@ -453,19 +637,19 @@ const clearKiroInstallPath = async () => {
 const createBackup = async () => {
   if (!newBackupName.value.trim()) return
   
-  loading.value = true
+  creatingBackup.value = true
   try {
     const result = await window.go.main.App.CreateBackup(newBackupName.value.trim())
     if (result.success) {
       showToast(t('message.success'), 'success')
       showCreateModal.value = false
       newBackupName.value = ''
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
   } finally {
-    loading.value = false
+    creatingBackup.value = false
   }
 }
 
@@ -477,17 +661,17 @@ const switchToBackup = async (name: string) => {
   })
   if (!confirmed) return
   
-  loading.value = true
+  switchingBackup.value = name
   try {
     const result = await window.go.main.App.SwitchToBackup(name)
     if (result.success) {
       showToast(t('message.restartKiro'), 'success')
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
   } finally {
-    loading.value = false
+    switchingBackup.value = null
   }
 }
 
@@ -499,17 +683,17 @@ const restoreOriginal = async () => {
   })
   if (!confirmed) return
   
-  loading.value = true
+  restoringOriginal.value = true
   try {
     const result = await window.go.main.App.RestoreSoftReset()
     if (result.success) {
       showToast(t('message.restartKiro'), 'success')
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
   } finally {
-    loading.value = false
+    restoringOriginal.value = false
   }
 }
 
@@ -540,7 +724,7 @@ const executeReset = async () => {
       // 標記已使用過一鍵新機
       hasUsedReset.value = true
       localStorage.setItem('kiro-manager-has-used-reset', 'true')
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
@@ -568,40 +752,64 @@ const deleteBackup = async (name: string) => {
   })
   if (!confirmed) return
   
-  loading.value = true
+  deletingBackup.value = name
   try {
     const result = await window.go.main.App.DeleteBackup(name)
     if (result.success) {
       showToast(t('message.success'), 'success')
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
   } finally {
-    loading.value = false
+    deletingBackup.value = null
   }
 }
 
 const regenerateMachineID = async (name: string) => {
-  const confirmed = await showConfirmDialog({
-    title: t('dialog.confirmTitle'),
-    message: t('message.confirmRegenerateId', { name }),
-    type: 'warning'
-  })
-  if (!confirmed) return
+  regeneratingId.value = name
+  const startTime = Date.now()
+  const MIN_ANIMATION_DURATION = 600 // 最少 600ms（3 次閃爍，每次 200ms）
   
-  loading.value = true
   try {
     const result = await window.go.main.App.RegenerateMachineID(name)
+    
+    // 確保動畫至少播放 3 次
+    const elapsed = Date.now() - startTime
+    if (elapsed < MIN_ANIMATION_DURATION) {
+      await new Promise(resolve => setTimeout(resolve, MIN_ANIMATION_DURATION - elapsed))
+    }
+    
     if (result.success) {
       showToast(t('message.regenerateIdSuccess'), 'success')
-      await loadBackups()
+      await loadBackups(false)
     } else {
       showToast(result.message, 'error')
     }
   } finally {
-    loading.value = false
+    regeneratingId.value = null
   }
+}
+
+// 訂閱方案顏色映射（使用大寫 key 以支援 API 返回的全大寫格式）
+const subscriptionColorMap: Record<string, string> = {
+  'KIRO FREE': 'bg-zinc-500/20 text-zinc-400 border border-zinc-500/30',
+  'KIRO PRO': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+  'KIRO PRO+': 'bg-violet-500/20 text-violet-400 border border-violet-500/30',
+  'KIRO POWER': 'bg-amber-500/20 text-amber-400 border border-amber-500/30',
+}
+
+// 根據訂閱方案名稱取得對應的顏色 class（大小寫不敏感）
+const getSubscriptionColorClass = (subscriptionTitle: string): string => {
+  const upperTitle = subscriptionTitle?.toUpperCase() || ''
+  return subscriptionColorMap[upperTitle] || 'bg-zinc-500/20 text-zinc-400 border border-zinc-500/30'
+}
+
+// 簡化訂閱方案名稱顯示（移除 "KIRO " 前綴）
+const getSubscriptionShortName = (subscriptionTitle: string): string => {
+  if (!subscriptionTitle) return ''
+  const upperTitle = subscriptionTitle.toUpperCase()
+  return upperTitle.replace(/^KIRO\s+/, '')
 }
 
 // 截取機器碼 ID 的首兩節（例如 4fa2ec40-7c9e-... → 4fa2ec40-7c9e...）
@@ -795,7 +1003,7 @@ const patchExtension = async () => {
     const result = await window.go.main.App.RepatchExtension()
     if (result.success) {
       showToast(result.message, 'success')
-      // 更新軟重置狀態
+      // 更新重置狀態
       softResetStatus.value = await window.go.main.App.GetSoftResetStatus()
     } else {
       showToast(result.message, 'error')
@@ -808,6 +1016,29 @@ const patchExtension = async () => {
   }
 }
 
+// 檢查 Kiro 安裝路徑偵測狀態，失敗時自動跳轉到設定頁面
+const checkPathDetectionStatus = async () => {
+  try {
+    const result = await window.go.main.App.GetKiroInstallPathWithStatus()
+    if (!result.success) {
+      // 偵測失敗，自動切換到設定頁面
+      activeMenu.value = 'settings'
+      showSettingsPanel.value = true
+      // 顯示提示訊息
+      showToast(t('message.pathDetectionFailed'), 'error')
+      // 聚焦到安裝路徑輸入欄位（延遲執行以確保 DOM 已更新）
+      setTimeout(() => {
+        const pathInput = document.querySelector('input[placeholder*="Kiro"]') as HTMLInputElement
+        if (pathInput) {
+          pathInput.focus()
+        }
+      }, 100)
+    }
+  } catch (e) {
+    console.error('Failed to check path detection status:', e)
+  }
+}
+
 onMounted(() => {
   // 語言已在 i18n/index.ts 中根據系統語言初始化
   // 這裡只需同步 locale 到當前組件（如果 localStorage 有值）
@@ -816,7 +1047,7 @@ onMounted(() => {
     locale.value = savedLang
   }
   
-  // 載入一鍵新機模式設定（硬一鍵新機暫時停用，強制使用軟一鍵新機）
+  // 載入一鍵新機模式設定（硬一鍵新機暫時停用，強制使用一鍵新機）
   resetMode.value = 'soft'
   localStorage.setItem('kiro-manager-reset-mode', 'soft')
   
@@ -825,8 +1056,18 @@ onMounted(() => {
   
   loadBackups()
   
+  // 檢查 Kiro 安裝路徑偵測狀態（偵測失敗時自動跳轉到設定頁面）
+  checkPathDetectionStatus()
+  
   // 每 5 秒檢查一次 Kiro 運行狀態
   setInterval(checkKiroStatus, 5000)
+  
+  // 監聽視窗大小變化
+  window.addEventListener('resize', saveWindowSize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', saveWindowSize)
 })
 </script>
 
@@ -1129,8 +1370,8 @@ onMounted(() => {
                 </span>
                 <!-- 顯示當前帳號訂閱和餘額 -->
                 <template v-if="currentUsageInfo">
-                  <span class="px-2 py-0.5 rounded text-[10px] bg-app-accent/20 text-app-accent border border-app-accent/30 font-medium">
-                    {{ currentUsageInfo.subscriptionTitle }}
+                  <span :class="['px-2 py-0.5 rounded text-[10px] font-medium', getSubscriptionColorClass(currentUsageInfo.subscriptionTitle)]">
+                    {{ getSubscriptionShortName(currentUsageInfo.subscriptionTitle) }}
                   </span>
                   <span 
                     :class="[
@@ -1205,10 +1446,19 @@ onMounted(() => {
                 </button>
                 <button 
                   @click="restoreOriginal"
-                  class="flex items-center px-4 py-2 bg-zinc-800/50 hover:bg-red-900/30 border border-zinc-700/50 hover:border-red-800/50 text-zinc-400 hover:text-red-400 rounded-lg text-sm transition-all"
+                  :disabled="restoringOriginal"
+                  :class="[
+                    'flex items-center px-4 py-2 border rounded-lg text-sm transition-all',
+                    restoringOriginal
+                      ? 'bg-zinc-800/50 border-zinc-700/50 text-zinc-500 cursor-wait'
+                      : 'bg-zinc-800/50 hover:bg-red-900/30 border-zinc-700/50 hover:border-red-800/50 text-zinc-400 hover:text-red-400'
+                  ]"
                 >
-                  <Icon name="Rotate" class="w-4 h-4 mr-2" />
-                  {{ t('restore.original') }}
+                  <Icon 
+                    name="Rotate" 
+                    :class="['w-4 h-4 mr-2', restoringOriginal ? 'animate-spin' : '']" 
+                  />
+                  {{ restoringOriginal ? t('app.processing') : t('restore.original') }}
                 </button>
               </div>
             </div>
@@ -1355,38 +1605,165 @@ onMounted(() => {
               <Icon name="Database" class="w-4 h-4 mr-2" />
               {{ t('backup.list') }}
             </h3>
-            <div class="relative">
-              <Icon name="Search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <input 
-                v-model="searchQuery"
-                :placeholder="t('backup.search')"
-                class="pl-9 pr-4 py-1.5 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-200 text-sm focus:outline-none focus:border-app-accent transition-colors w-48"
-              />
+            <div class="flex items-center gap-4">
+              <!-- 批量操作按鈕（僅在有選中項目時顯示） -->
+              <div v-if="hasSelection" class="flex items-center gap-2">
+                <span class="text-xs text-zinc-400 mr-1">
+                  {{ t('batch.selected', { count: selectedBackups.size }) }}
+                </span>
+                <button 
+                  @click="batchRefreshUsage"
+                  :disabled="batchOperating"
+                  :class="[
+                    'p-1.5 rounded transition-all',
+                    !batchOperating
+                      ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                      : 'text-zinc-600 cursor-not-allowed'
+                  ]"
+                  :title="t('batch.refreshAll')"
+                >
+                  <Icon name="RefreshCw" :class="['w-4 h-4', batchOperating ? 'animate-spin' : '']" />
+                </button>
+                <button 
+                  @click="batchRegenerateMachineID"
+                  :disabled="batchOperating"
+                  :class="[
+                    'p-1.5 rounded transition-all',
+                    !batchOperating
+                      ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                      : 'text-zinc-600 cursor-not-allowed'
+                  ]"
+                  :title="t('batch.regenerateAll')"
+                >
+                  <Icon name="Key" class="w-4 h-4" />
+                </button>
+                <button 
+                  @click="batchDelete"
+                  :disabled="batchOperating"
+                  :class="[
+                    'p-1.5 rounded transition-all',
+                    !batchOperating
+                      ? 'text-zinc-400 hover:text-red-400 hover:bg-zinc-700/50'
+                      : 'text-zinc-600 cursor-not-allowed'
+                  ]"
+                  :title="t('batch.deleteAll')"
+                >
+                  <Icon name="Trash" class="w-4 h-4" />
+                </button>
+              </div>
+              <div class="relative">
+                <Icon name="Search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <input 
+                  v-model="searchQuery"
+                  :placeholder="t('backup.search')"
+                  class="pl-9 pr-4 py-1.5 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-200 text-sm focus:outline-none focus:border-app-accent transition-colors w-48"
+                />
+              </div>
             </div>
           </div>
           
-          <div class="bg-app-surface border border-app-border rounded-xl overflow-hidden shadow-xl">
-            <table class="w-full text-left border-collapse">
+          <div class="bg-app-surface border border-app-border rounded-xl overflow-x-auto shadow-xl">
+            <table class="w-full text-left border-collapse min-w-[900px]">
               <thead>
                 <tr class="border-b border-zinc-800 bg-zinc-900/50 text-zinc-500 text-xs uppercase tracking-wider">
-                  <th class="px-6 py-4 font-medium">{{ t('backup.name') }}</th>
-                  <th class="px-6 py-4 font-medium">{{ t('backup.provider') }}</th>
-                  <th class="px-6 py-4 font-medium">{{ t('backup.subscription') }}</th>
-                  <th class="px-6 py-4 font-medium">{{ t('backup.balance') }}</th>
-                  <th class="px-6 py-4 font-medium">{{ t('backup.machineId') }}</th>
-                  <th class="px-6 py-4 font-medium text-right">{{ t('backup.actions') }}</th>
+                  <th class="px-4 py-4 w-10 whitespace-nowrap">
+                    <input 
+                      type="checkbox"
+                      :checked="isAllSelected"
+                      @change="toggleSelectAll"
+                      class="custom-checkbox"
+                    />
+                  </th>
+                  <th class="px-6 py-4 font-medium whitespace-nowrap">{{ t('backup.name') }}</th>
+                  <!-- 來源篩選 -->
+                  <th class="px-2 py-4 font-medium whitespace-nowrap relative">
+                    <button 
+                      @click="toggleFilter('provider')"
+                      :class="[
+                        'flex items-center gap-1 text-xs uppercase tracking-wider font-medium transition-all duration-200',
+                        filterProvider ? 'text-app-accent filter-glow' : 'text-zinc-500 hover:text-zinc-300'
+                      ]"
+                    >
+                      <span>{{ filterProvider || t('backup.provider') }}</span>
+                      <Icon name="ChevronDown" :class="['w-3 h-3 transition-transform duration-200', openFilter === 'provider' ? 'rotate-180' : '']" />
+                    </button>
+                    <div 
+                      v-if="openFilter === 'provider'"
+                      class="absolute top-full left-0 mt-1 min-w-[100px] py-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 flex flex-col"
+                    >
+                      <button @click="setFilterProvider('')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', !filterProvider ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('backup.provider') }}</button>
+                      <button @click="setFilterProvider('Github')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterProvider === 'Github' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">Github</button>
+                      <button @click="setFilterProvider('AWS')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterProvider === 'AWS' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">AWS</button>
+                      <button @click="setFilterProvider('Google')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterProvider === 'Google' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">Google</button>
+                    </div>
+                  </th>
+                  <!-- 訂閱篩選 -->
+                  <th class="px-2 py-4 font-medium whitespace-nowrap relative">
+                    <button 
+                      @click="toggleFilter('subscription')"
+                      :class="[
+                        'flex items-center gap-1 text-xs uppercase tracking-wider font-medium transition-all duration-200',
+                        filterSubscription ? 'text-app-accent filter-glow' : 'text-zinc-500 hover:text-zinc-300'
+                      ]"
+                    >
+                      <span>{{ filterSubscription || t('backup.subscription') }}</span>
+                      <Icon name="ChevronDown" :class="['w-3 h-3 transition-transform duration-200', openFilter === 'subscription' ? 'rotate-180' : '']" />
+                    </button>
+                    <div 
+                      v-if="openFilter === 'subscription'"
+                      class="absolute top-full left-0 mt-1 min-w-[100px] py-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 flex flex-col"
+                    >
+                      <button @click="setFilterSubscription('')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', !filterSubscription ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('backup.subscription') }}</button>
+                      <button @click="setFilterSubscription('FREE')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterSubscription === 'FREE' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">FREE</button>
+                      <button @click="setFilterSubscription('PRO')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterSubscription === 'PRO' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">PRO</button>
+                      <button @click="setFilterSubscription('PRO+')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterSubscription === 'PRO+' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">PRO+</button>
+                      <button @click="setFilterSubscription('POWER')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterSubscription === 'POWER' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">POWER</button>
+                    </div>
+                  </th>
+                  <!-- 餘額篩選 -->
+                  <th class="px-2 py-4 font-medium whitespace-nowrap relative">
+                    <button 
+                      @click="toggleFilter('balance')"
+                      :class="[
+                        'flex items-center gap-1 text-xs uppercase tracking-wider font-medium transition-all duration-200',
+                        filterBalance ? 'text-app-accent filter-glow' : 'text-zinc-500 hover:text-zinc-300'
+                      ]"
+                    >
+                      <span>{{ filterBalance === 'LOW' ? t('filter.lowBalance') : filterBalance === 'NORMAL' ? t('filter.normal') : filterBalance === 'NO_DATA' ? t('filter.noData') : t('backup.balance') }}</span>
+                      <Icon name="ChevronDown" :class="['w-3 h-3 transition-transform duration-200', openFilter === 'balance' ? 'rotate-180' : '']" />
+                    </button>
+                    <div 
+                      v-if="openFilter === 'balance'"
+                      class="absolute top-full left-0 mt-1 min-w-[100px] py-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 flex flex-col"
+                    >
+                      <button @click="setFilterBalance('')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', !filterBalance ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('backup.balance') }}</button>
+                      <button @click="setFilterBalance('LOW')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterBalance === 'LOW' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('filter.lowBalance') }}</button>
+                      <button @click="setFilterBalance('NORMAL')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterBalance === 'NORMAL' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('filter.normal') }}</button>
+                      <button @click="setFilterBalance('NO_DATA')" :class="['w-full px-3 py-2 text-left text-xs transition-colors', filterBalance === 'NO_DATA' ? 'text-app-accent bg-app-accent/10' : 'text-zinc-400 hover:text-white hover:bg-zinc-800']">{{ t('filter.noData') }}</button>
+                    </div>
+                  </th>
+                  <th class="px-6 py-4 font-medium whitespace-nowrap">{{ t('backup.machineId') }}</th>
+                  <th class="px-6 py-4 font-medium text-right whitespace-nowrap">{{ t('backup.actions') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-zinc-800/50">
                 <tr v-if="filteredBackups.length === 0">
-                  <td colspan="6" class="px-6 py-12 text-center text-zinc-500">{{ t('backup.noBackups') }}</td>
+                  <td colspan="7" class="px-6 py-12 text-center text-zinc-500 whitespace-nowrap">{{ t('backup.noBackups') }}</td>
                 </tr>
                 <tr 
                   v-for="backup in filteredBackups" 
                   :key="backup.name"
                   :class="['group transition-colors', backup.isCurrent ? 'bg-app-accent/5' : 'hover:bg-zinc-800/30']"
                 >
-                  <td class="px-6 py-4">
+                  <td class="px-4 py-4 whitespace-nowrap">
+                    <input 
+                      type="checkbox"
+                      :checked="selectedBackups.has(backup.name)"
+                      @change="toggleSelect(backup.name)"
+                      class="custom-checkbox"
+                    />
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
                     <div class="flex items-center">
                       <div v-if="backup.isCurrent" class="w-1.5 h-1.5 rounded-full bg-app-warning mr-3 shadow-[0_0_8px_rgba(245,158,11,0.8)]"></div>
                       <span :class="['font-medium', backup.isCurrent ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-300']">
@@ -1397,7 +1774,7 @@ onMounted(() => {
                       </span>
                     </div>
                   </td>
-                  <td class="px-6 py-4">
+                  <td class="px-6 py-4 whitespace-nowrap">
                     <span class="px-2 py-1 rounded text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700 inline-flex items-center gap-1.5">
                       <Icon v-if="backup.provider === 'Github'" name="Github" class="w-3.5 h-3.5" />
                       <Icon v-else-if="backup.provider === 'AWS' || backup.provider === 'BuilderId'" name="AWS" class="w-3.5 h-3.5" />
@@ -1406,17 +1783,17 @@ onMounted(() => {
                     </span>
                   </td>
                   <!-- 訂閱類型 (Requirements: 3.3) -->
-                  <td class="px-6 py-4">
+                  <td class="px-6 py-4 whitespace-nowrap">
                     <span 
                       v-if="backup.subscriptionTitle"
-                      class="px-2 py-1 rounded text-[10px] bg-app-accent/20 text-app-accent border border-app-accent/30 font-medium"
+                      :class="['px-2 py-1 rounded text-[10px] font-medium', getSubscriptionColorClass(backup.subscriptionTitle)]"
                     >
-                      {{ backup.subscriptionTitle }}
+                      {{ getSubscriptionShortName(backup.subscriptionTitle) }}
                     </span>
                     <span v-else class="text-zinc-500">-</span>
                   </td>
                   <!-- 餘額 (Requirements: 3.1, 3.2) -->
-                  <td class="px-6 py-4">
+                  <td class="px-6 py-4 whitespace-nowrap">
                     <div class="flex items-center gap-2">
                       <span 
                         v-if="backup.usageLimit > 0"
@@ -1472,7 +1849,7 @@ onMounted(() => {
                       </template>
                     </div>
                   </td>
-                  <td class="px-6 py-4">
+                  <td class="px-6 py-4 whitespace-nowrap">
                     <button
                       v-if="backup.machineId"
                       @click="copyMachineId(backup.machineId)"
@@ -1492,7 +1869,7 @@ onMounted(() => {
                     </button>
                     <span v-else class="font-mono text-xs text-zinc-500">-</span>
                   </td>
-                  <td class="px-6 py-4 text-right">
+                  <td class="px-6 py-4 text-right whitespace-nowrap">
                     <div v-if="backup.isCurrent" class="text-app-warning text-xs font-bold flex items-center justify-end gap-1">
                       <div class="w-1 h-1 bg-app-warning rounded-full animate-ping"></div>
                       {{ t('status.active') }}
@@ -1500,22 +1877,50 @@ onMounted(() => {
                     <div v-else class="flex items-center justify-end gap-2">
                       <button 
                         @click="switchToBackup(backup.name)"
-                        class="text-xs bg-transparent border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white px-3 py-1.5 rounded transition-all"
+                        :disabled="switchingBackup === backup.name"
+                        :class="[
+                          'text-xs bg-transparent border px-2 py-1.5 rounded transition-all',
+                          switchingBackup === backup.name
+                            ? 'border-zinc-700 text-zinc-500 cursor-wait'
+                            : 'border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white'
+                        ]"
+                        :title="t('backup.switchTo')"
                       >
-                        {{ t('backup.switchTo') }}
+                        <Icon 
+                          name="Download" 
+                          :class="['w-3 h-3', switchingBackup === backup.name ? 'animate-bounce' : '']" 
+                        />
                       </button>
                       <button 
                         @click="regenerateMachineID(backup.name)"
-                        class="text-xs bg-transparent border border-zinc-700 hover:border-app-accent text-zinc-400 hover:text-app-accent px-2 py-1.5 rounded transition-all"
+                        :disabled="regeneratingId === backup.name"
+                        :class="[
+                          'text-xs bg-transparent border px-2 py-1.5 rounded transition-all',
+                          regeneratingId === backup.name
+                            ? 'border-zinc-700 text-zinc-500 cursor-wait'
+                            : 'border-zinc-700 hover:border-app-accent text-zinc-400 hover:text-app-accent'
+                        ]"
                         :title="t('backup.regenerateId')"
                       >
-                        <Icon name="RefreshCw" class="w-3 h-3" />
+                        <Icon 
+                          name="Key" 
+                          :class="['w-3 h-3', regeneratingId === backup.name ? 'animate-pulse-fast' : '']" 
+                        />
                       </button>
                       <button 
                         @click="deleteBackup(backup.name)"
-                        class="text-xs bg-transparent border border-zinc-700 hover:border-red-700 text-zinc-400 hover:text-red-400 px-2 py-1.5 rounded transition-all"
+                        :disabled="deletingBackup === backup.name"
+                        :class="[
+                          'text-xs bg-transparent border px-2 py-1.5 rounded transition-all',
+                          deletingBackup === backup.name
+                            ? 'border-zinc-700 text-zinc-500 cursor-wait'
+                            : 'border-zinc-700 hover:border-red-700 text-zinc-400 hover:text-red-400'
+                        ]"
                       >
-                        <Icon name="Trash" class="w-3 h-3" />
+                        <Icon 
+                          name="Trash" 
+                          :class="['w-3 h-3', deletingBackup === backup.name ? 'animate-pulse' : '']" 
+                        />
                       </button>
                     </div>
                   </td>
@@ -1553,15 +1958,23 @@ onMounted(() => {
         <div class="flex justify-end gap-3">
           <button 
             @click="showCreateModal = false"
-            class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors"
+            :disabled="creatingBackup"
+            class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {{ t('backup.cancel') }}
           </button>
           <button 
             @click="createBackup"
-            class="px-4 py-2 bg-app-accent hover:bg-app-accent/80 text-white rounded-lg text-sm transition-colors"
+            :disabled="creatingBackup || !newBackupName.trim()"
+            :class="[
+              'px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2',
+              creatingBackup || !newBackupName.trim()
+                ? 'bg-app-accent/50 text-white/70 cursor-wait'
+                : 'bg-app-accent hover:bg-app-accent/80 text-white'
+            ]"
           >
-            {{ t('backup.confirm') }}
+            <Icon v-if="creatingBackup" name="Loader" class="w-4 h-4 animate-spin" />
+            {{ creatingBackup ? t('app.processing') : t('backup.confirm') }}
           </button>
         </div>
       </div>
@@ -1655,11 +2068,20 @@ onMounted(() => {
       <div 
         v-if="toast.show" 
         :class="[
-          'fixed bottom-5 right-5 px-5 py-3 rounded-lg text-white text-sm z-50 shadow-lg',
-          toast.type === 'success' ? 'bg-app-success' : 'bg-app-danger'
+          'fixed bottom-5 right-5 px-4 py-3 rounded-xl text-white text-sm z-50',
+          'shadow-lg border border-app-border backdrop-blur-xl',
+          'flex items-center gap-3',
+          'bg-zinc-900/90'
         ]"
       >
-        {{ toast.message }}
+        <Icon 
+          :name="toast.type === 'success' ? 'CheckCircle' : 'XCircle'" 
+          :class="[
+            'w-5 h-5 flex-shrink-0',
+            toast.type === 'success' ? 'text-app-success' : 'text-app-danger'
+          ]" 
+        />
+        <span>{{ toast.message }}</span>
       </div>
     </Transition>
   </div>

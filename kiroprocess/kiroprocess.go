@@ -12,8 +12,9 @@ var (
 
 // ProcessInfo 包含進程的基本資訊
 type ProcessInfo struct {
-	PID  int    `json:"pid"`
-	Name string `json:"name"`
+	PID     int    `json:"pid"`
+	Name    string `json:"name"`
+	ExePath string `json:"exePath"` // 執行檔完整路徑
 }
 
 // IsKiroRunning 檢查 Kiro 是否正在運行
@@ -77,4 +78,19 @@ func KillKiroProcesses() (int, error) {
 	}
 
 	return killed, nil
+}
+
+// GetKiroExecutablePath 從運行中的 Kiro 進程取得執行檔完整路徑
+// 如果 Kiro 未運行，返回 ErrProcessNotFound
+func GetKiroExecutablePath() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		return getWindowsKiroExecutablePath()
+	case "darwin":
+		return getDarwinKiroExecutablePath()
+	case "linux":
+		return getLinuxKiroExecutablePath()
+	default:
+		return "", ErrUnsupportedPlatform
+	}
 }

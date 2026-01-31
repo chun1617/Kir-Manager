@@ -55,7 +55,8 @@ Thumbs.db
 .codelf/
 .kiro/
 .vscode/
-extension.js
+docs/
+extension/
 
 # -----------------------------------------------------------------------------
 # Logs

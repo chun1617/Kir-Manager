@@ -116,6 +116,73 @@ func killWindowsProcess(pid int) error {
 	return cmd.Run()
 }
 
+// getWindowsKiroExecutablePath 使用 WMIC 取得 Kiro 進程的執行檔完整路徑
+func getWindowsKiroExecutablePath() (string, error) {
+	// 先檢查 Kiro 是否運行
+	processes, err := getWindowsKiroProcesses()
+	if err != nil {
+		return "", err
+	}
+	if len(processes) == 0 {
+		return "", ErrProcessNotFound
+	}
+
+	// 使用 WMIC 取得執行檔路徑
+	// wmic process where "name='Kiro.exe'" get ExecutablePath /format:list
+	cmd := exec.Command("wmic", "process", "where", "name='Kiro.exe'", "get", "ExecutablePath", "/format:list")
+	cmdutil.HideWindow(cmd)
+	output, err := cmd.Output()
+	if err != nil {
+		// WMIC 失敗時嘗試 PowerShell
+		return getWindowsKiroExecutablePathPowerShell()
+	}
+
+	// 解析 WMIC 輸出
+	// 格式: ExecutablePath=C:\Users\...\Kiro.exe
+	path := parseWMICExecutablePath(string(output))
+	if path != "" {
+		return path, nil
+	}
+
+	// WMIC 解析失敗時嘗試 PowerShell
+	return getWindowsKiroExecutablePathPowerShell()
+}
+
+// parseWMICExecutablePath 解析 WMIC 輸出取得執行檔路徑
+func parseWMICExecutablePath(output string) string {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ExecutablePath=") {
+			path := strings.TrimPrefix(line, "ExecutablePath=")
+			path = strings.TrimSpace(path)
+			if path != "" {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+// getWindowsKiroExecutablePathPowerShell 使用 PowerShell 取得 Kiro 進程的執行檔路徑
+func getWindowsKiroExecutablePathPowerShell() (string, error) {
+	// Get-Process -Name Kiro -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path
+	cmd := exec.Command("powershell", "-NoProfile", "-Command",
+		"Get-Process -Name Kiro -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path")
+	cmdutil.HideWindow(cmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", ErrProcessNotFound
+	}
+
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		return "", ErrProcessNotFound
+	}
+
+	return path, nil
+}
+
 // getDarwinKiroProcesses Windows 平台不支援
 func getDarwinKiroProcesses() ([]ProcessInfo, error) {
 	return nil, ErrUnsupportedPlatform
@@ -129,4 +196,14 @@ func getLinuxKiroProcesses() ([]ProcessInfo, error) {
 // killUnixProcess Windows 平台不支援
 func killUnixProcess(pid int) error {
 	return ErrUnsupportedPlatform
+}
+
+// getDarwinKiroExecutablePath Windows 平台不支援
+func getDarwinKiroExecutablePath() (string, error) {
+	return "", ErrUnsupportedPlatform
+}
+
+// getLinuxKiroExecutablePath Windows 平台不支援
+func getLinuxKiroExecutablePath() (string, error) {
+	return "", ErrUnsupportedPlatform
 }

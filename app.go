@@ -63,6 +63,15 @@ type Result struct {
 	Message string `json:"message"`
 }
 
+// PathDetectionResult 路徑偵測結果（前端用）
+// 用於 GetKiroInstallPathWithStatus() 返回偵測狀態和詳細資訊
+type PathDetectionResult struct {
+	Path            string            `json:"path"`
+	Success         bool              `json:"success"`
+	TriedStrategies []string          `json:"triedStrategies,omitempty"`
+	FailureReasons  map[string]string `json:"failureReasons,omitempty"`
+}
+
 // GetBackupList 取得備份列表
 func (a *App) GetBackupList() ([]BackupItem, error) {
 	backups, err := backup.ListBackups()
@@ -70,7 +79,7 @@ func (a *App) GetBackupList() ([]BackupItem, error) {
 		return nil, err
 	}
 
-	// 取得當前 Machine ID（優先使用軟重置的自訂 ID）
+	// 取得當前 Machine ID（優先使用重置的自訂 ID）
 	currentMachineID := a.GetCurrentMachineID()
 
 	// 讀取原始 Machine ID
@@ -430,7 +439,7 @@ func (a *App) EnsureOriginalBackup() Result {
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.2.1",
+		"version":   "0.2.2",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}
@@ -458,7 +467,7 @@ type CurrentUsageInfo struct {
 // GetCurrentUsageInfo 取得當前帳號的用量資訊
 // 讀取當前 Kiro 登入的 token，優先從緩存讀取，緩存不存在時呼叫 API
 func (a *App) GetCurrentUsageInfo() *CurrentUsageInfo {
-	// 取得當前 Machine ID（優先使用軟重置的自訂 ID）
+	// 取得當前 Machine ID（優先使用重置的自訂 ID）
 	currentMachineID := a.GetCurrentMachineID()
 	threshold := settings.GetLowBalanceThreshold()
 
@@ -558,10 +567,10 @@ func (a *App) GetKiroProcesses() []kiroprocess.ProcessInfo {
 
 
 // ============================================================================
-// 軟一鍵新機功能（跨平台）
+// 一鍵新機功能（跨平台）
 // ============================================================================
 
-// SoftResetStatus 軟重置狀態（前端用）
+// SoftResetStatus 重置狀態（前端用）
 type SoftResetStatus struct {
 	IsPatched       bool   `json:"isPatched"`
 	HasCustomID     bool   `json:"hasCustomId"`
@@ -570,7 +579,7 @@ type SoftResetStatus struct {
 	IsSupported     bool   `json:"isSupported"`
 }
 
-// SoftResetToNewMachine 軟一鍵新機（跨平台，不需要管理員權限）
+// SoftResetToNewMachine 一鍵新機（跨平台，不需要管理員權限）
 func (a *App) SoftResetToNewMachine() Result {
 	// 檢測並強制關閉 Kiro
 	if kiroprocess.IsKiroRunning() {
@@ -590,17 +599,17 @@ func (a *App) SoftResetToNewMachine() Result {
 
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("軟重置成功！新 Machine ID: %s", result.NewMachineID[:8]+"..."),
+		Message: fmt.Sprintf("重置成功！新 Machine ID: %s", result.NewMachineID[:8]+"..."),
 	}
 }
 
-// GetSoftResetStatus 取得軟重置狀態
+// GetSoftResetStatus 取得重置狀態
 func (a *App) GetSoftResetStatus() SoftResetStatus {
 	status := SoftResetStatus{
 		IsSupported: true,
 	}
 
-	// 取得軟重置狀態
+	// 取得重置狀態
 	softStatus, err := softreset.GetSoftResetStatus()
 	if err != nil {
 		status.IsSupported = false
@@ -615,7 +624,7 @@ func (a *App) GetSoftResetStatus() SoftResetStatus {
 	return status
 }
 
-// RestoreSoftReset 還原軟重置（恢復系統原始 Machine ID）
+// RestoreSoftReset 還原重置（恢復系統原始 Machine ID）
 func (a *App) RestoreSoftReset() Result {
 	// 檢測並強制關閉 Kiro
 	if kiroprocess.IsKiroRunning() {
@@ -712,6 +721,12 @@ type AppSettings struct {
 	CustomKiroInstallPath string  `json:"customKiroInstallPath"` // 自定義 Kiro 安裝路徑
 }
 
+// WindowSize 視窗尺寸結構
+type WindowSize struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 // GetSettings 取得全域設定
 func (a *App) GetSettings() AppSettings {
 	s := settings.GetCurrentSettings()
@@ -737,6 +752,32 @@ func (a *App) SaveSettings(appSettings AppSettings) Result {
 	return Result{Success: true, Message: "設定已儲存"}
 }
 
+// GetWindowSize 取得已保存的視窗尺寸
+func (a *App) GetWindowSize() WindowSize {
+	s := settings.GetCurrentSettings()
+	return WindowSize{
+		Width:  s.WindowWidth,
+		Height: s.WindowHeight,
+	}
+}
+
+// SaveWindowSize 保存視窗尺寸
+func (a *App) SaveWindowSize(width, height int) Result {
+	s := settings.GetCurrentSettings()
+	newSettings := &settings.Settings{
+		LowBalanceThreshold:   s.LowBalanceThreshold,
+		KiroVersion:           s.KiroVersion,
+		UseAutoDetect:         s.UseAutoDetect,
+		CustomKiroInstallPath: s.CustomKiroInstallPath,
+		WindowWidth:           width,
+		WindowHeight:          height,
+	}
+	if err := settings.SaveSettings(newSettings); err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("保存視窗尺寸失敗: %v", err)}
+	}
+	return Result{Success: true, Message: "視窗尺寸已保存"}
+}
+
 // GetDetectedKiroInstallPath 自動偵測 Kiro 安裝路徑
 func (a *App) GetDetectedKiroInstallPath() Result {
 	path, err := kiropath.GetKiroInstallPathAutoDetect()
@@ -744,6 +785,35 @@ func (a *App) GetDetectedKiroInstallPath() Result {
 		return Result{Success: false, Message: fmt.Sprintf("偵測失敗: %v", err)}
 	}
 	return Result{Success: true, Message: path}
+}
+
+// GetKiroInstallPathWithStatus 取得 Kiro 安裝路徑及偵測狀態
+// 返回結構包含路徑、是否成功、嘗試過的策略、失敗原因等資訊
+// 用於前端判斷是否需要引導用戶手動設定路徑
+func (a *App) GetKiroInstallPathWithStatus() PathDetectionResult {
+	path, err := kiropath.GetKiroInstallPath()
+	if err != nil {
+		// 檢查是否為 DetectionFailedError，提取詳細資訊
+		if detectionErr, ok := err.(*kiropath.DetectionFailedError); ok {
+			return PathDetectionResult{
+				Path:            "",
+				Success:         false,
+				TriedStrategies: detectionErr.TriedStrategies,
+				FailureReasons:  detectionErr.FailureReasons,
+			}
+		}
+		// 其他錯誤
+		return PathDetectionResult{
+			Path:            "",
+			Success:         false,
+			TriedStrategies: []string{},
+			FailureReasons:  map[string]string{"error": err.Error()},
+		}
+	}
+	return PathDetectionResult{
+		Path:    path,
+		Success: true,
+	}
 }
 
 // GetDetectedKiroVersion 自動偵測 Kiro IDE 執行檔的版本號

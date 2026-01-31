@@ -3,6 +3,8 @@ package main
 import (
 	"embed"
 
+	"kiro-manager/settings"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -15,12 +17,23 @@ var assets embed.FS
 func main() {
 	app := NewApp()
 
+	// 載入已保存的視窗大小
+	s, _ := settings.LoadSettings()
+	width := settings.DefaultWindowWidth
+	height := settings.DefaultWindowHeight
+	if s != nil && s.WindowWidth >= settings.MinWindowWidth {
+		width = s.WindowWidth
+	}
+	if s != nil && s.WindowHeight >= settings.MinWindowHeight {
+		height = s.WindowHeight
+	}
+
 	err := wails.Run(&options.App{
 		Title:     "Kiro Manager",
-		Width:     1230,
-		Height:    680,
-		MinWidth:  1230,
-		MinHeight: 600,
+		Width:     width,
+		Height:    height,
+		MinWidth:  settings.MinWindowWidth,
+		MinHeight: settings.MinWindowHeight,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
