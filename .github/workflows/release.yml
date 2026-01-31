@@ -48,7 +48,21 @@ jobs:
       - name: Build
         run: wails build -platform ${{ matrix.platform }} -o ${{ matrix.output }}
 
-      - name: Upload Artifact
+      - name: Package macOS App
+        if: runner.os == 'macOS'
+        run: |
+          cd build/bin
+          zip -r ${{ matrix.output }}.zip *.app
+
+      - name: Upload Artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: build/bin/${{ matrix.output }}.zip
+
+      - name: Upload Artifact (Linux)
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.output }}
