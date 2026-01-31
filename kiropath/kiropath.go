@@ -9,10 +9,25 @@ import (
 	"kiro-manager/settings"
 )
 
+func init() {
+	// 註冊路徑快取失效回調，當設定變更時自動清除快取
+	settings.SetPathCacheInvalidator(InvalidatePathCache)
+}
+
 var (
-	ErrKiroNotFound      = errors.New("kiro installation not found")
+	ErrKiroNotFound        = errors.New("kiro installation not found")
 	ErrUnsupportedPlatform = errors.New("unsupported platform: " + runtime.GOOS)
 )
+
+// DetectionFailedError 表示所有偵測策略都失敗
+type DetectionFailedError struct {
+	TriedStrategies []string
+	FailureReasons  map[string]string
+}
+
+func (e *DetectionFailedError) Error() string {
+	return "all detection strategies failed"
+}
 
 // GetKiroHomePath 取得 Kiro 的使用者設定目錄 (~/.kiro)
 func GetKiroHomePath() (string, error) {
@@ -56,20 +71,109 @@ func GetKiroConfigPath() (string, error) {
 
 
 // GetKiroInstallPath 取得 Kiro 的安裝路徑
-// 優先使用自定義路徑，若未設定則自動偵測
-// Windows: 檢查 %LOCALAPPDATA%\Programs\Kiro 和 %PROGRAMFILES%\Kiro
-// macOS: /Applications/Kiro.app
-// Linux: /usr/share/kiro, /opt/kiro, 或 /usr/local/bin/kiro
+// 使用優先級偵測鏈：
+// 1. 快取 - 如果已有快取的路徑，直接返回
+// 2. 自定義路徑 - 用戶設定的路徑
+// 3. Running Process - 從運行中的 Kiro 進程提取
+// 4. 平台特定偵測 - Registry/Spotlight/which
+// 5. 硬編碼路徑列表 - 常見安裝位置
+// 6. PATH 環境變數 - 從 PATH 中搜索
 func GetKiroInstallPath() (string, error) {
-	// 優先使用自定義路徑
+	// 1. 檢查快取
+	if cached := getPathCache(); cached != "" {
+		return cached, nil
+	}
+
+	// 追蹤嘗試過的策略和失敗原因
+	triedStrategies := []string{}
+	failureReasons := map[string]string{}
+
+	// 2.1 自定義路徑
+	triedStrategies = append(triedStrategies, "custom")
 	customPath := settings.GetCustomKiroInstallPath()
 	if customPath != "" {
 		if _, err := os.Stat(customPath); err == nil {
+			setPathCache(customPath)
 			return customPath, nil
 		}
-		// 自定義路徑無效，繼續嘗試自動偵測
+		failureReasons["custom"] = "path does not exist"
+	} else {
+		failureReasons["custom"] = "not configured"
 	}
 
+	// 2.2 Running Process 偵測
+	triedStrategies = append(triedStrategies, "process")
+	if processPath, err := getRunningProcessPath(); err == nil && processPath != "" {
+		setPathCache(processPath)
+		return processPath, nil
+	} else if err != nil {
+		failureReasons["process"] = err.Error()
+	} else {
+		failureReasons["process"] = "kiro not running"
+	}
+
+	// 2.3 平台特定偵測 (Registry/Spotlight/which)
+	triedStrategies = append(triedStrategies, "platform")
+	if platformPath, err := getPlatformSpecificPath(); err == nil && platformPath != "" {
+		setPathCache(platformPath)
+		return platformPath, nil
+	} else if err != nil {
+		failureReasons["platform"] = err.Error()
+	} else {
+		failureReasons["platform"] = "not found"
+	}
+
+	// 2.4 硬編碼路徑列表
+	triedStrategies = append(triedStrategies, "hardcoded")
+	if hardcodedPath, err := getHardcodedPath(); err == nil && hardcodedPath != "" {
+		setPathCache(hardcodedPath)
+		return hardcodedPath, nil
+	} else if err != nil {
+		failureReasons["hardcoded"] = err.Error()
+	} else {
+		failureReasons["hardcoded"] = "not found"
+	}
+
+	// 2.5 PATH 環境變數
+	triedStrategies = append(triedStrategies, "path")
+	if pathEnvPath, err := searchInPath(); err == nil && pathEnvPath != "" {
+		setPathCache(pathEnvPath)
+		return pathEnvPath, nil
+	} else if err != nil {
+		failureReasons["path"] = err.Error()
+	} else {
+		failureReasons["path"] = "not in PATH"
+	}
+
+	// 3. 所有策略失敗
+	return "", &DetectionFailedError{
+		TriedStrategies: triedStrategies,
+		FailureReasons:  failureReasons,
+	}
+}
+
+// getRunningProcessPath 從運行中的 Kiro 進程取得安裝路徑
+func getRunningProcessPath() (string, error) {
+	// 延遲導入以避免循環依賴，使用內部實作
+	return getRunningProcessPathInternal()
+}
+
+// getPlatformSpecificPath 使用平台特定方式偵測 Kiro 安裝路徑
+func getPlatformSpecificPath() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		return getWindowsRegistryPath()
+	case "darwin":
+		return getDarwinSpotlightPath()
+	case "linux":
+		return getLinuxWhichPath()
+	default:
+		return "", ErrUnsupportedPlatform
+	}
+}
+
+// getHardcodedPath 從硬編碼的路徑列表中搜索 Kiro
+func getHardcodedPath() (string, error) {
 	switch runtime.GOOS {
 	case "windows":
 		return getWindowsKiroInstallPath()
@@ -220,6 +324,47 @@ func getLinuxKiroInstallPath() (string, error) {
 		localPath := filepath.Join(homeDir, ".local", "share", "kiro")
 		if _, err := os.Stat(localPath); err == nil {
 			return localPath, nil
+		}
+	}
+
+	return "", ErrKiroNotFound
+}
+
+// searchInPath 從 PATH 環境變數中搜索 Kiro 執行檔
+// 遍歷 PATH 中的每個目錄，檢查是否存在 kiro 或 Kiro.exe
+// 返回找到的執行檔所在目錄
+func searchInPath() (string, error) {
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		return "", ErrKiroNotFound
+	}
+
+	// 根據平台決定執行檔名稱
+	var execName string
+	switch runtime.GOOS {
+	case "windows":
+		execName = "Kiro.exe"
+	default:
+		execName = "kiro"
+	}
+
+	// 使用 filepath.SplitList 分割 PATH（自動處理平台差異）
+	dirs := filepath.SplitList(pathEnv)
+
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+
+		// 檢查目錄是否存在
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+
+		// 檢查執行檔是否存在
+		execPath := filepath.Join(dir, execName)
+		if _, err := os.Stat(execPath); err == nil {
+			return dir, nil
 		}
 	}
 

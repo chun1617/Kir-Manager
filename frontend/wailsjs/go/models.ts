@@ -3,6 +3,7 @@ export namespace kiroprocess {
 	export class ProcessInfo {
 	    pid: number;
 	    name: string;
+	    exePath: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessInfo(source);
@@ -12,6 +13,7 @@ export namespace kiroprocess {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pid = source["pid"];
 	        this.name = source["name"];
+	        this.exePath = source["exePath"];
 	    }
 	}
 
@@ -97,6 +99,24 @@ export namespace main {
 	        this.isLowBalance = source["isLowBalance"];
 	    }
 	}
+	export class PathDetectionResult {
+	    path: string;
+	    success: boolean;
+	    triedStrategies?: string[];
+	    failureReasons?: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new PathDetectionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.success = source["success"];
+	        this.triedStrategies = source["triedStrategies"];
+	        this.failureReasons = source["failureReasons"];
+	    }
+	}
 	export class Result {
 	    success: boolean;
 	    message: string;
@@ -157,6 +177,20 @@ export namespace main {
 	        this.isLowBalance = source["isLowBalance"];
 	        this.isTokenExpired = source["isTokenExpired"];
 	        this.cachedAt = source["cachedAt"];
+	    }
+	}
+	export class WindowSize {
+	    width: number;
+	    height: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WindowSize(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.width = source["width"];
+	        this.height = source["height"];
 	    }
 	}
 

@@ -23,7 +23,7 @@ var (
 	ErrKiroHomeNotFound = errors.New("kiro home directory not found")
 )
 
-// SoftResetResult 軟重置結果
+// SoftResetResult 重置結果
 type SoftResetResult struct {
 	OldMachineID string `json:"oldMachineId"`
 	NewMachineID string `json:"newMachineId"`
@@ -31,7 +31,7 @@ type SoftResetResult struct {
 	CacheCleared bool   `json:"cacheCleared"`
 }
 
-// SoftResetStatus 軟重置狀態
+// SoftResetStatus 重置狀態
 type SoftResetStatus struct {
 	IsPatched       bool   `json:"isPatched"`
 	HasCustomID     bool   `json:"hasCustomId"`
@@ -181,7 +181,7 @@ func ClearSSOCache() error {
 	return os.RemoveAll(cachePath)
 }
 
-// SoftResetEnvironment 執行軟一鍵新機
+// SoftResetEnvironment 執行一鍵新機
 func SoftResetEnvironment() (*SoftResetResult, error) {
 	result := &SoftResetResult{}
 
@@ -255,7 +255,7 @@ func RestoreOriginalMachineID() error {
 	return nil
 }
 
-// GetSoftResetStatus 取得軟重置狀態
+// GetSoftResetStatus 取得重置狀態
 func GetSoftResetStatus() (*SoftResetStatus, error) {
 	status := &SoftResetStatus{}
 

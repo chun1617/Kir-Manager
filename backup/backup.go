@@ -152,6 +152,21 @@ func ListBackups() ([]BackupInfo, error) {
 }
 
 
+// getCurrentMachineID 取得當前應該使用的 Machine ID
+// 優先順序：
+// 1. custom-machine-id-raw（一鍵新機後的自訂 ID）
+// 2. 系統原始 Machine ID
+func getCurrentMachineID() (string, error) {
+	// 優先讀取自訂 Machine ID（一鍵新機後的值）
+	customID, err := softreset.ReadCustomMachineIDRaw()
+	if err == nil && customID != "" {
+		return customID, nil
+	}
+
+	// Fallback 到系統原始 Machine ID
+	return machineid.GetRawMachineId()
+}
+
 // CreateBackup 創建一個新的備份
 func CreateBackup(name string) error {
 	if name == "" {
@@ -218,7 +233,7 @@ func CreateBackup(name string) error {
 	}
 
 	// 備份 Machine ID
-	rawMachineID, err := machineid.GetRawMachineId()
+	rawMachineID, err := getCurrentMachineID()
 	if err != nil {
 		os.RemoveAll(backupPath)
 		return fmt.Errorf("failed to get machine id: %w", err)
@@ -470,7 +485,7 @@ func CreateMachineIDOnlyBackup(name string) error {
 	}
 
 	// 僅備份 Machine ID
-	rawMachineID, err := machineid.GetRawMachineId()
+	rawMachineID, err := getCurrentMachineID()
 	if err != nil {
 		os.RemoveAll(backupPath)
 		return fmt.Errorf("failed to get machine id: %w", err)

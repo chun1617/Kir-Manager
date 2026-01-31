@@ -46,6 +46,10 @@ export function GetDetectedKiroVersion() {
   return window['go']['main']['App']['GetDetectedKiroVersion']();
 }
 
+export function GetKiroInstallPathWithStatus() {
+  return window['go']['main']['App']['GetKiroInstallPathWithStatus']();
+}
+
 export function GetKiroProcesses() {
   return window['go']['main']['App']['GetKiroProcesses']();
 }
@@ -56,6 +60,10 @@ export function GetSettings() {
 
 export function GetSoftResetStatus() {
   return window['go']['main']['App']['GetSoftResetStatus']();
+}
+
+export function GetWindowSize() {
+  return window['go']['main']['App']['GetWindowSize']();
 }
 
 export function IsKiroRunning() {
@@ -92,6 +100,10 @@ export function RestoreSoftReset() {
 
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
+export function SaveWindowSize(arg1, arg2) {
+  return window['go']['main']['App']['SaveWindowSize'](arg1, arg2);
 }
 
 export function SoftResetToNewMachine() {

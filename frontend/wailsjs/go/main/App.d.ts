@@ -25,11 +25,15 @@ export function GetDetectedKiroInstallPath():Promise<main.Result>;
 
 export function GetDetectedKiroVersion():Promise<main.Result>;
 
+export function GetKiroInstallPathWithStatus():Promise<main.PathDetectionResult>;
+
 export function GetKiroProcesses():Promise<Array<kiroprocess.ProcessInfo>>;
 
 export function GetSettings():Promise<main.AppSettings>;
 
 export function GetSoftResetStatus():Promise<main.SoftResetStatus>;
+
+export function GetWindowSize():Promise<main.WindowSize>;
 
 export function IsKiroRunning():Promise<boolean>;
 
@@ -48,6 +52,8 @@ export function RepatchExtension():Promise<main.Result>;
 export function RestoreSoftReset():Promise<main.Result>;
 
 export function SaveSettings(arg1:main.AppSettings):Promise<main.Result>;
+
+export function SaveWindowSize(arg1:number,arg2:number):Promise<main.Result>;
 
 export function SoftResetToNewMachine():Promise<main.Result>;
 
