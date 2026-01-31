@@ -2,6 +2,7 @@ package tokenrefresh
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/rand"
 	"strings"
@@ -730,13 +731,13 @@ func TestProperty_HTTPErrorCodeMapping(t *testing.T) {
 			}
 		}
 
-		// 其他狀態碼應映射為「Token 刷新失敗」
+		// 其他狀態碼應映射為「Token 刷新失敗 (HTTP xxx): body」格式
 		if statusCode != 401 && statusCode != 403 && statusCode != 429 &&
 			!(statusCode >= 500 && statusCode < 600) {
-			expectedMsg := "Token 刷新失敗"
-			if refreshErr.Message != expectedMsg {
-				t.Logf("Message mismatch for %d: got %q, expected %q",
-					statusCode, refreshErr.Message, expectedMsg)
+			expectedPrefix := fmt.Sprintf("Token 刷新失敗 (HTTP %d):", statusCode)
+			if !strings.HasPrefix(refreshErr.Message, expectedPrefix) {
+				t.Logf("Message mismatch for %d: got %q, expected prefix %q",
+					statusCode, refreshErr.Message, expectedPrefix)
 				return false
 			}
 		}
@@ -803,21 +804,21 @@ func TestMapHTTPError_SpecificCodes(t *testing.T) {
 			statusCode:  599,
 			expectedMsg: "伺服器暫時無法使用，請稍後再試",
 		},
-		// 其他狀態碼
+		// 其他狀態碼（包含詳細錯誤資訊）
 		{
 			name:        "HTTP 400 Bad Request",
 			statusCode:  400,
-			expectedMsg: "Token 刷新失敗",
+			expectedMsg: "Token 刷新失敗 (HTTP 400): test body",
 		},
 		{
 			name:        "HTTP 404 Not Found",
 			statusCode:  404,
-			expectedMsg: "Token 刷新失敗",
+			expectedMsg: "Token 刷新失敗 (HTTP 404): test body",
 		},
 		{
 			name:        "HTTP 408 Request Timeout",
 			statusCode:  408,
-			expectedMsg: "Token 刷新失敗",
+			expectedMsg: "Token 刷新失敗 (HTTP 408): test body",
 		},
 	}
 

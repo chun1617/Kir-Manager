@@ -6,6 +6,10 @@ export function CreateBackup(arg1) {
   return window['go']['main']['App']['CreateBackup'](arg1);
 }
 
+export function CreateSnapshotFromOAuth(arg1, arg2) {
+  return window['go']['main']['App']['CreateSnapshotFromOAuth'](arg1, arg2);
+}
+
 export function DeleteBackup(arg1) {
   return window['go']['main']['App']['DeleteBackup'](arg1);
 }
@@ -66,6 +70,10 @@ export function GetWindowSize() {
   return window['go']['main']['App']['GetWindowSize']();
 }
 
+export function IsDeepLinkSupported() {
+  return window['go']['main']['App']['IsDeepLinkSupported']();
+}
+
 export function IsKiroRunning() {
   return window['go']['main']['App']['IsKiroRunning']();
 }
@@ -110,10 +118,22 @@ export function SoftResetToNewMachine() {
   return window['go']['main']['App']['SoftResetToNewMachine']();
 }
 
+export function StartIdCLogin() {
+  return window['go']['main']['App']['StartIdCLogin']();
+}
+
+export function StartSocialLogin(arg1) {
+  return window['go']['main']['App']['StartSocialLogin'](arg1);
+}
+
 export function SwitchToBackup(arg1) {
   return window['go']['main']['App']['SwitchToBackup'](arg1);
 }
 
 export function UnpatchExtension() {
   return window['go']['main']['App']['UnpatchExtension']();
+}
+
+export function ValidateSnapshotName(arg1) {
+  return window['go']['main']['App']['ValidateSnapshotName'](arg1);
 }

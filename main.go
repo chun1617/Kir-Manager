@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 
+	"kiro-manager/deeplink"
 	"kiro-manager/settings"
 
 	"github.com/wailsapp/wails/v2"
@@ -16,6 +17,9 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+
+	// 初始化 deep link 回調 channel
+	deeplink.InitCallbackChannel()
 
 	// 載入已保存的視窗大小
 	s, _ := settings.LoadSettings()
@@ -39,6 +43,10 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 9, G: 9, B: 11, A: 1},
 		OnStartup:        app.startup,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "kiro-manager-single-instance",
+			OnSecondInstanceLaunch: app.onSecondInstanceLaunch,
+		},
 		Bind: []interface{}{
 			app,
 		},

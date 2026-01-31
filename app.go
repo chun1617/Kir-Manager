@@ -3,21 +3,28 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"kiro-manager/awssso"
 	"kiro-manager/backup"
+	"kiro-manager/deeplink"
 	"kiro-manager/kiropath"
 	"kiro-manager/kiroprocess"
 	"kiro-manager/kiroversion"
 	"kiro-manager/machineid"
+	"kiro-manager/oauthlogin"
 	"kiro-manager/settings"
 	"kiro-manager/softreset"
 	"kiro-manager/tokenrefresh"
 	"kiro-manager/usage"
+
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v2/pkg/options"
 )
 
 // App struct
@@ -35,6 +42,23 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	// 不再於啟動時自動備份，避免觸發防毒軟體誤報
 	// 改為在用戶首次執行需要備份的操作時才觸發
+
+	// 註冊 URL Scheme (Windows only)
+	if err := deeplink.EnsureURLSchemeRegistered(); err != nil {
+		// 記錄錯誤但不阻止啟動
+		println("Warning: Failed to register URL scheme:", err.Error())
+	}
+
+	// 檢查啟動時的命令行參數是否包含 deep link URL
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "kiro://") {
+			result, err := deeplink.HandleDeepLinkCallback(arg)
+			if err == nil {
+				deeplink.SendCallback(result)
+			}
+			break
+		}
+	}
 }
 
 // BackupItem 備份項目（前端用）
@@ -436,10 +460,34 @@ func (a *App) EnsureOriginalBackup() Result {
 
 
 
+// onSecondInstanceLaunch 處理第二個實例啟動 (deep link 回調)
+func (a *App) onSecondInstanceLaunch(data options.SecondInstanceData) {
+	// 檢查是否有 deep link URL
+	for _, arg := range data.Args {
+		if strings.HasPrefix(arg, "kiro://") {
+			// 解析並處理 deep link
+			result, err := deeplink.HandleDeepLinkCallback(arg)
+			if err == nil {
+				deeplink.SendCallback(result)
+			}
+			break
+		}
+	}
+
+	// 聚焦視窗
+	wailsRuntime.WindowUnminimise(a.ctx)
+	wailsRuntime.Show(a.ctx)
+}
+
+// IsDeepLinkSupported 檢查當前平台是否支援 Deep Link
+func (a *App) IsDeepLinkSupported() bool {
+	return deeplink.IsDeepLinkSupported()
+}
+
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.3.0",
+		"version":   "0.4.0",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}
@@ -880,4 +928,190 @@ func openFolder(folderPath string) Result {
 	}
 
 	return Result{Success: true, Message: "已打開文件夾"}
+}
+
+
+// ============================================================================
+// OAuth 登入功能
+// ============================================================================
+
+// OAuthLoginResult OAuth 登入結果（前端用）
+type OAuthLoginResult struct {
+	Success      bool   `json:"success"`
+	Message      string `json:"message"`
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ExpiresAt    string `json:"expiresAt,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	AuthMethod   string `json:"authMethod,omitempty"`
+	// IdC 專用
+	ClientId     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	ClientIdHash string `json:"clientIdHash,omitempty"`
+	// IdC 設備授權專用
+	UserCode        string `json:"userCode,omitempty"`
+	VerificationUri string `json:"verificationUri,omitempty"`
+}
+
+// StartSocialLogin 啟動 Social 登入流程
+// 參數: provider 為 "Github" 或 "Google"
+// 設定 5 分鐘超時，自動開啟瀏覽器
+// Windows 平台使用 Deep Link 模式，其他平台使用本地 Callback Server 模式
+func (a *App) StartSocialLogin(provider string) OAuthLoginResult {
+	// 驗證 provider
+	if provider != oauthlogin.ProviderGithub && provider != oauthlogin.ProviderGoogle {
+		return OAuthLoginResult{
+			Success: false,
+			Message: fmt.Sprintf("不支援的登入提供者: %s，請使用 Github 或 Google", provider),
+		}
+	}
+
+	// 建立帶超時的 context
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
+	defer cancel()
+
+	// 配置 Social 登入
+	config := oauthlogin.SocialLoginCoordinatorConfig{
+		Provider:    provider,
+		Timeout:     5 * time.Minute,
+		OpenBrowser: true,
+	}
+
+	var result *oauthlogin.LoginResult
+	var err error
+
+	// Windows 平台使用 Deep Link 模式
+	if deeplink.IsDeepLinkSupported() {
+		result, err = oauthlogin.SocialLoginWithDeepLink(ctx, config)
+	} else {
+		// 非 Windows 平台使用本地 Callback Server 模式
+		result, err = oauthlogin.SocialLogin(ctx, config)
+	}
+
+	if err != nil {
+		// 處理 OAuth 錯誤
+		if oauthErr, ok := err.(*oauthlogin.OAuthError); ok {
+			switch oauthErr.Code {
+			case oauthlogin.ErrCodeTimeout:
+				return OAuthLoginResult{Success: false, Message: "登入超時，請重試"}
+			case oauthlogin.ErrCodeCancelled:
+				return OAuthLoginResult{Success: false, Message: "登入已取消"}
+			case oauthlogin.ErrCodeStateMismatch:
+				return OAuthLoginResult{Success: false, Message: "安全驗證失敗，請重試"}
+			default:
+				return OAuthLoginResult{Success: false, Message: fmt.Sprintf("登入失敗: %s", oauthErr.Message)}
+			}
+		}
+		return OAuthLoginResult{Success: false, Message: fmt.Sprintf("登入失敗: %v", err)}
+	}
+
+	// 返回成功結果
+	return OAuthLoginResult{
+		Success:      true,
+		Message:      "登入成功",
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),
+		Provider:     result.Provider,
+		AuthMethod:   result.AuthMethod,
+	}
+}
+
+// IdCStartURL Kiro IdC 登入起始 URL
+const IdCStartURL = "https://view.awsapps.com/start"
+
+// StartIdCLogin 啟動 IdC 登入流程
+// 設定 5 分鐘超時，自動開啟瀏覽器
+// 返回結果包含 userCode 和 verificationUri 供前端顯示
+func (a *App) StartIdCLogin() OAuthLoginResult {
+	// 建立帶超時的 context
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
+	defer cancel()
+
+	// 配置 IdC 登入
+	config := oauthlogin.IdCLoginCoordinatorConfig{
+		StartURL:    IdCStartURL,
+		ClientName:  "Kiro Manager",
+		Timeout:     5 * time.Minute,
+		OpenBrowser: true,
+	}
+
+	// 執行登入
+	result, err := oauthlogin.IdCLogin(ctx, config)
+	if err != nil {
+		// 處理 OAuth 錯誤
+		if oauthErr, ok := err.(*oauthlogin.OAuthError); ok {
+			switch oauthErr.Code {
+			case oauthlogin.ErrCodeTimeout:
+				return OAuthLoginResult{Success: false, Message: "登入超時，請重試"}
+			case oauthlogin.ErrCodeCancelled:
+				return OAuthLoginResult{Success: false, Message: "登入已取消"}
+			default:
+				return OAuthLoginResult{Success: false, Message: fmt.Sprintf("登入失敗: %s", oauthErr.Message)}
+			}
+		}
+		return OAuthLoginResult{Success: false, Message: fmt.Sprintf("登入失敗: %v", err)}
+	}
+
+	// 返回成功結果（包含 IdC 專用欄位）
+	return OAuthLoginResult{
+		Success:      true,
+		Message:      "登入成功",
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),
+		Provider:     result.Provider,
+		AuthMethod:   result.AuthMethod,
+		ClientId:     result.ClientId,
+		ClientSecret: result.ClientSecret,
+		ClientIdHash: result.ClientIdHash,
+	}
+}
+
+// CreateSnapshotFromOAuth 從 OAuth 登入結果建立環境快照
+// 將 OAuthLoginResult 轉換為 backup.OAuthBackupData 並建立快照
+func (a *App) CreateSnapshotFromOAuth(name string, data OAuthLoginResult) Result {
+	// 驗證名稱
+	if name == "" {
+		return Result{Success: false, Message: "快照名稱不能為空"}
+	}
+
+	// 驗證登入結果
+	if !data.Success {
+		return Result{Success: false, Message: "無法從失敗的登入結果建立快照"}
+	}
+
+	// 解析過期時間
+	expiresAt, err := time.Parse(time.RFC3339, data.ExpiresAt)
+	if err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("無效的過期時間格式: %v", err)}
+	}
+
+	// 轉換為 backup.OAuthBackupData
+	backupData := &backup.OAuthBackupData{
+		AccessToken:  data.AccessToken,
+		RefreshToken: data.RefreshToken,
+		ExpiresAt:    expiresAt,
+		Provider:     data.Provider,
+		AuthMethod:   data.AuthMethod,
+		ClientId:     data.ClientId,
+		ClientSecret: data.ClientSecret,
+		ClientIdHash: data.ClientIdHash,
+	}
+
+	// 建立快照
+	if err := backup.CreateBackupFromOAuth(name, backupData); err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("建立快照失敗: %v", err)}
+	}
+
+	return Result{Success: true, Message: fmt.Sprintf("已建立快照: %s", name)}
+}
+
+// ValidateSnapshotName 驗證快照名稱是否有效
+// 規則：不可為空、不可包含非法字元、不可與現有快照重複
+func (a *App) ValidateSnapshotName(name string) Result {
+	if err := backup.ValidateSnapshotName(name); err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	return Result{Success: true, Message: "名稱有效"}
 }
