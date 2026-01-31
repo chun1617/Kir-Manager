@@ -439,7 +439,7 @@ func (a *App) EnsureOriginalBackup() Result {
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.2.2",
+		"version":   "0.3.0",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}

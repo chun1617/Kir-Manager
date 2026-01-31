@@ -2,7 +2,7 @@ export default {
   app: {
     title: 'Kiro 帳號管理器',
     name: 'Kiro 帳號管理器',
-    version: 'v0.2.2',
+    version: 'v0.3.0',
     systemReady: '準備就緒',
     online: 'ONLINE',
     processing: '處理中...',

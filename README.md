@@ -1,6 +1,6 @@
 # Kiro Manager
 
-> 跨平台 Kiro IDE 管理工具 | v0.2.2
+> 跨平台 Kiro IDE 管理工具 | v0.3.0
 
 一款基於 Wails + Vue 3 的桌面應用程式，提供 Kiro IDE 的帳號管理、Machine ID 備份與恢復、一鍵新機等功能。
 
