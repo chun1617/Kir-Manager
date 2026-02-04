@@ -19,6 +19,10 @@ export function EnsureOriginalBackup():Promise<main.Result>;
 
 export function GetAppInfo():Promise<Record<string, string>>;
 
+export function GetAutoSwitchSettings():Promise<main.AutoSwitchSettingsDTO>;
+
+export function GetAutoSwitchStatus():Promise<main.AutoSwitchStatus>;
+
 export function GetBackupList():Promise<Array<main.BackupItem>>;
 
 export function GetCurrentEnvironmentName():Promise<string>;
@@ -65,15 +69,21 @@ export function RepatchExtension():Promise<main.Result>;
 
 export function RestoreSoftReset():Promise<main.Result>;
 
+export function SaveAutoSwitchSettings(arg1:main.AutoSwitchSettingsDTO):Promise<main.Result>;
+
 export function SaveSettings(arg1:main.AppSettings):Promise<main.Result>;
 
 export function SaveWindowSize(arg1:number,arg2:number):Promise<main.Result>;
 
 export function SoftResetToNewMachine():Promise<main.Result>;
 
+export function StartAutoSwitchMonitor():Promise<main.Result>;
+
 export function StartIdCLogin():Promise<main.OAuthLoginResult>;
 
 export function StartSocialLogin(arg1:string):Promise<main.OAuthLoginResult>;
+
+export function StopAutoSwitchMonitor():Promise<main.Result>;
 
 export function SwitchToBackup(arg1:string):Promise<main.Result>;
 

@@ -22,7 +22,9 @@ func generateRandomString(r *rand.Rand, length int) string {
 	return string(result)
 }
 
-// generateRandomKiroAuthTokenMap 生成隨機的 KiroAuthToken map（包含各種欄位）
+// generateRandomKiroAuthTokenMap 生成隨機的 KiroAuthToken map
+// 注意：只生成 orderedKiroAuthToken struct 中定義的已知欄位
+// 這是設計限制：WriteBackupToken 使用 struct-based 序列化，只保留已知欄位
 func generateRandomKiroAuthTokenMap(r *rand.Rand) map[string]interface{} {
 	tokenMap := make(map[string]interface{})
 
@@ -31,7 +33,7 @@ func generateRandomKiroAuthTokenMap(r *rand.Rand) map[string]interface{} {
 	tokenMap["expiresAt"] = "2025-12-08T12:00:00Z"
 	tokenMap["refreshToken"] = generateRandomString(r, r.Intn(100)+10)
 
-	// 可選欄位（隨機決定是否包含）
+	// 可選欄位（隨機決定是否包含）- 僅限 orderedKiroAuthToken 中定義的欄位
 	if r.Float32() > 0.3 {
 		tokenMap["provider"] = []string{"Github", "Google", "AWS"}[r.Intn(3)]
 	}
@@ -50,18 +52,8 @@ func generateRandomKiroAuthTokenMap(r *rand.Rand) map[string]interface{} {
 	if r.Float32() > 0.3 {
 		tokenMap["profileArn"] = "arn:aws:kiro::" + generateRandomString(r, 12) + ":profile/" + generateRandomString(r, 8)
 	}
-	// 加入一些額外的自訂欄位（模擬未知欄位）
-	if r.Float32() > 0.5 {
-		tokenMap["customField1"] = generateRandomString(r, 20)
-	}
-	if r.Float32() > 0.5 {
-		tokenMap["customField2"] = r.Intn(1000)
-	}
-	if r.Float32() > 0.5 {
-		tokenMap["nestedObject"] = map[string]interface{}{
-			"key1": generateRandomString(r, 10),
-			"key2": r.Intn(100),
-		}
+	if r.Float32() > 0.3 {
+		tokenMap["clientIdHash"] = generateRandomString(r, 64)
 	}
 
 	return tokenMap

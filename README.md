@@ -1,6 +1,6 @@
 # Kiro Manager
 
-> 跨平台 Kiro IDE 管理工具 | v0.5.0
+> 跨平台 Kiro IDE 管理工具 | v0.6.0
 
 一款基於 Wails + Vue 3 的桌面應用程式，提供 Kiro IDE 的帳號管理、Machine ID 備份與恢復、一鍵新機等功能。
 
@@ -15,6 +15,9 @@
 - **Kiro 進程檢測** - 自動檢測並關閉運行中的 Kiro 進程
 - **自定義安裝路徑** - 支援手動指定 Kiro 安裝路徑，或自動偵測
 - **雙語言支援** - 繁體中文 / 簡體中文介面
+- **🆕 自動切換環境快照** - 餘額不足時自動切換至其他環境快照，支援動態刷新頻率與篩選條件
+- **🆕 分頁化設定介面** - 全域設定分為「基礎設定」與「自動切換」分頁，更清晰的設定管理
+- **🆕 無感切號** - 切換環境快照後無需重啟 Kiro IDE，Machine ID 即時生效（V4 Patch 動態讀取技術）
 
 ## 一鍵新機
 
@@ -25,12 +28,14 @@
 - ✅ 不需要管理員權限
 - ✅ 不修改系統 Registry，不影響其他軟體
 - ✅ 可隨時還原為系統原始 Machine ID
+- ✅ **無感切號**：切換環境快照後無需重啟 Kiro IDE（V4 動態讀取技術）
 
 **原理：**
 1. 在 `~/.kiro/custom-machine-id` 儲存自訂的 Machine ID（SHA256 雜湊值）
 2. 在 `~/.kiro/custom-machine-id-raw` 儲存原始 UUID（供 UI 顯示）
-3. Patch Kiro 的 extension.js，注入多層攔截程式碼（V3 版本）
+3. Patch Kiro 的 extension.js，注入多層攔截程式碼（V4 版本）
 4. 攔截 `vscode.env.machineId`、`node-machine-id`、`child_process`、`fs` 等讀取方式
+5. **每次讀取都從檔案取得最新值**，實現動態切換
 
 **注意事項：**
 - Kiro 更新後需要重新執行 Patch（程式會自動提示）
@@ -101,6 +106,22 @@ wails build
 
 點擊「還原出廠」刪除自訂 Machine ID，恢復使用系統原始值。
 
+### 自動切換環境快照
+
+1. 進入「全域設定」→「自動切換」分頁
+2. 開啟自動切換總開關
+3. 設定觸發閾值（餘額低於此值時觸發切換）
+4. 可選設定篩選條件：
+   - 限定文件夾：僅切換至指定文件夾內的快照
+   - 限定訂閱類型：僅切換至指定訂閱層級的快照
+   - 目標最低餘額：目標快照需滿足的最低餘額
+5. 可自訂刷新頻率規則（依餘額範圍設定不同間隔）
+
+**安全機制：**
+- 切換後進入 5 分鐘冷卻期
+- 每小時最多自動切換 3 次
+- 切換前會驗證目標快照餘額
+
 ### 批量操作
 
 1. 在環境快照列表中勾選多個項目
@@ -136,7 +157,13 @@ kiro-manager/
 ├── settings/           # 應用程式設定模組
 ├── softreset/          # 一鍵新機模組（跨平台）
 │   ├── softreset.go    # 自訂 Machine ID 管理
-│   └── patch.go        # extension.js Patch 邏輯（V3）
+│   └── patch.go        # extension.js Patch 邏輯（V4）
+├── autoswitch/         # 自動切換模組
+│   ├── config.go       # 自動切換配置
+│   ├── monitor.go      # 餘額監控
+│   ├── selector.go     # 目標快照選擇
+│   ├── safety.go       # 安全機制（冷卻期、次數限制）
+│   └── notify.go       # 通知機制
 ├── tokenrefresh/       # Token 刷新模組
 │   └── tokenrefresh.go # Social/IdC 雙認證支援
 ├── usage/              # 用量查詢模組
@@ -170,6 +197,10 @@ kiro-manager/
 ⚠️ **認證類型**
 - **Social 認證** (GitHub/Google)：使用 `profileArn` 進行 API 呼叫
 - **IdC 認證** (AWS Identity Center)：使用 `clientIdHash` 關聯 clientId/clientSecret
+
+⚠️ **自動切換**
+- 自動切換功能會在背景監控餘額，建議設定合理的觸發閾值
+- 切換過程中請勿手動操作，以免衝突
 
 ## 授權條款
 

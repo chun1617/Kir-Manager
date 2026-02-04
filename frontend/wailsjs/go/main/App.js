@@ -34,6 +34,14 @@ export function GetAppInfo() {
   return window['go']['main']['App']['GetAppInfo']();
 }
 
+export function GetAutoSwitchSettings() {
+  return window['go']['main']['App']['GetAutoSwitchSettings']();
+}
+
+export function GetAutoSwitchStatus() {
+  return window['go']['main']['App']['GetAutoSwitchStatus']();
+}
+
 export function GetBackupList() {
   return window['go']['main']['App']['GetBackupList']();
 }
@@ -126,6 +134,10 @@ export function RestoreSoftReset() {
   return window['go']['main']['App']['RestoreSoftReset']();
 }
 
+export function SaveAutoSwitchSettings(arg1) {
+  return window['go']['main']['App']['SaveAutoSwitchSettings'](arg1);
+}
+
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }
@@ -138,12 +150,20 @@ export function SoftResetToNewMachine() {
   return window['go']['main']['App']['SoftResetToNewMachine']();
 }
 
+export function StartAutoSwitchMonitor() {
+  return window['go']['main']['App']['StartAutoSwitchMonitor']();
+}
+
 export function StartIdCLogin() {
   return window['go']['main']['App']['StartIdCLogin']();
 }
 
 export function StartSocialLogin(arg1) {
   return window['go']['main']['App']['StartSocialLogin'](arg1);
+}
+
+export function StopAutoSwitchMonitor() {
+  return window['go']['main']['App']['StopAutoSwitchMonitor']();
 }
 
 export function SwitchToBackup(arg1) {

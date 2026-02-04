@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
+	"kiro-manager/autoswitch"
 	"kiro-manager/awssso"
 	"kiro-manager/backup"
 	"kiro-manager/deeplink"
@@ -26,6 +28,13 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/wailsapp/wails/v2/pkg/options"
 )
+
+// 全域切換鎖（與自動切換共用）
+var globalSwitchMu sync.Mutex
+
+// 自動切換監控器
+var autoSwitchMonitor *autoswitch.Monitor
+var autoSwitchMonitorMu sync.RWMutex
 
 // App struct
 type App struct {
@@ -313,22 +322,68 @@ func (a *App) CreateBackup(name string) Result {
 }
 
 // SwitchToBackup 切換至指定備份帳號（恢復 token）
+// V4 Patch 支援動態讀取 Machine ID，無需重啟 Kiro IDE
+// 切換前會先刷新 Token，確保載入至 SSO 文件夾的 Token 是有效的
 func (a *App) SwitchToBackup(name string) Result {
+	// 嘗試取得全域切換鎖，避免與自動切換衝突
+	if !globalSwitchMu.TryLock() {
+		return Result{Success: false, Message: "正在切換中，請稍後再試"}
+	}
+	defer globalSwitchMu.Unlock()
+
 	if name == "" {
 		return Result{Success: false, Message: "請選擇備份"}
 	}
 
-	// 檢測並強制關閉 Kiro
-	if kiroprocess.IsKiroRunning() {
-		killed, err := kiroprocess.KillKiroProcesses()
-		if err != nil {
-			return Result{Success: false, Message: fmt.Sprintf("關閉 Kiro 失敗: %v", err)}
+	if !backup.BackupExists(name) {
+		return Result{Success: false, Message: "備份不存在"}
+	}
+
+	// 讀取備份的 Machine ID（用於 Token 刷新）
+	mid, err := backup.ReadBackupMachineID(name)
+	if err != nil {
+		return Result{Success: false, Message: "無法讀取備份的 Machine ID"}
+	}
+	hashedMachineID := machineid.HashMachineID(mid.MachineID)
+
+	// 讀取備份的 token
+	token, err := backup.ReadBackupToken(name)
+	if err != nil {
+		return Result{Success: false, Message: "無法讀取備份的 token"}
+	}
+
+	// 檢查 token 是否已過期，若過期則先刷新
+	if awssso.IsTokenExpired(token) {
+		var newTokenInfo *tokenrefresh.TokenInfo
+		var refreshErr error
+
+		// 檢查是否為 IdC 認證，如果是則從備份目錄讀取 clientId/clientSecret
+		authType := tokenrefresh.DetectAuthType(token)
+		if authType == "idc" && token.ClientIdHash != "" {
+			// 從備份目錄讀取 IdC credentials
+			clientID, clientSecret, credErr := backup.ReadBackupIdCCredentials(name, token.ClientIdHash)
+			if credErr != nil {
+				return Result{Success: false, Message: "無法讀取 IdC 認證資訊: " + credErr.Error()}
+			}
+			newTokenInfo, refreshErr = tokenrefresh.RefreshAccessTokenFromBackup(token, hashedMachineID, clientID, clientSecret)
+		} else {
+			// Social 認證或其他情況
+			newTokenInfo, refreshErr = tokenrefresh.RefreshAccessToken(token, hashedMachineID)
 		}
-		if killed == 0 && kiroprocess.IsKiroRunning() {
-			return Result{Success: false, Message: "無法關閉 Kiro，請手動關閉後重試"}
+
+		if refreshErr != nil {
+			// Token 刷新失敗，返回錯誤提示用戶
+			return Result{Success: false, Message: fmt.Sprintf("Token 刷新失敗，無法切換: %v", refreshErr)}
+		}
+
+		// 將刷新後的 Token 寫入備份目錄
+		newExpiresAt := newTokenInfo.ExpiresAt.UTC().Format("2006-01-02T15:04:05.000Z")
+		if err := backup.WriteBackupToken(name, newTokenInfo.AccessToken, newExpiresAt); err != nil {
+			return Result{Success: false, Message: "Token 刷新成功但寫入失敗: " + err.Error()}
 		}
 	}
 
+	// 執行恢復操作（將備份的 Token 複製到 SSO 目錄）
 	if err := backup.RestoreBackup(name); err != nil {
 		return Result{Success: false, Message: fmt.Sprintf("恢復 Token 失敗: %v", err)}
 	}
@@ -493,7 +548,7 @@ func (a *App) IsDeepLinkSupported() bool {
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.5.0",
+		"version":   "0.6.0",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}
@@ -634,18 +689,8 @@ type SoftResetStatus struct {
 }
 
 // SoftResetToNewMachine 一鍵新機（跨平台，不需要管理員權限）
+// V4 Patch 支援動態讀取 Machine ID，無需重啟 Kiro IDE
 func (a *App) SoftResetToNewMachine() Result {
-	// 檢測並強制關閉 Kiro
-	if kiroprocess.IsKiroRunning() {
-		killed, err := kiroprocess.KillKiroProcesses()
-		if err != nil {
-			return Result{Success: false, Message: fmt.Sprintf("關閉 Kiro 失敗: %v", err)}
-		}
-		if killed == 0 && kiroprocess.IsKiroRunning() {
-			return Result{Success: false, Message: "無法關閉 Kiro，請手動關閉後重試"}
-		}
-	}
-
 	result, err := softreset.SoftResetEnvironment()
 	if err != nil {
 		return Result{Success: false, Message: err.Error()}
@@ -766,6 +811,34 @@ func (a *App) UnpatchExtension() Result {
 // ============================================================================
 // 全域設定功能
 // ============================================================================
+
+// RefreshIntervalDTO 刷新頻率分級 DTO（前端用）
+// 將 time.Duration 轉換為分鐘數，方便前端處理
+type RefreshIntervalDTO struct {
+	MinBalance float64 `json:"minBalance"` // 餘額下限（含）
+	MaxBalance float64 `json:"maxBalance"` // 餘額上限（不含），-1 表示無上限
+	Interval   int     `json:"interval"`   // 刷新間隔（分鐘）
+}
+
+// AutoSwitchSettingsDTO 前端用自動切換設定結構
+type AutoSwitchSettingsDTO struct {
+	Enabled            bool                 `json:"enabled"`
+	BalanceThreshold   float64              `json:"balanceThreshold"`
+	MinTargetBalance   float64              `json:"minTargetBalance"`
+	FolderIds          []string             `json:"folderIds"`
+	SubscriptionTypes  []string             `json:"subscriptionTypes"`
+	RefreshIntervals   []RefreshIntervalDTO `json:"refreshIntervals"`
+	NotifyOnSwitch     bool                 `json:"notifyOnSwitch"`
+	NotifyOnLowBalance bool                 `json:"notifyOnLowBalance"`
+}
+
+// AutoSwitchStatus 監控狀態（前端用）
+type AutoSwitchStatus struct {
+	Status            string  `json:"status"`            // "stopped", "running", "cooldown"
+	LastBalance       float64 `json:"lastBalance"`
+	CooldownRemaining int     `json:"cooldownRemaining"` // 秒
+	SwitchCount       int     `json:"switchCount"`
+}
 
 // AppSettings 應用設定（前端用）
 type AppSettings struct {
@@ -1226,4 +1299,252 @@ func (a *App) UnassignSnapshot(snapshotName string) Result {
 		return Result{Success: false, Message: err.Error()}
 	}
 	return Result{Success: true, Message: "快照已移至未分類"}
+}
+
+// ============================================================================
+// 自動切換功能
+// ============================================================================
+
+// GetAutoSwitchSettings 取得自動切換設定
+func (a *App) GetAutoSwitchSettings() AutoSwitchSettingsDTO {
+	s := settings.GetCurrentSettings()
+	if s.AutoSwitch == nil {
+		// 返回預設值
+		defaults := autoswitch.DefaultAutoSwitchSettings()
+		// 轉換 RefreshIntervals 為 DTO
+		refreshIntervalsDTO := make([]RefreshIntervalDTO, len(defaults.RefreshIntervals))
+		for i, interval := range defaults.RefreshIntervals {
+			refreshIntervalsDTO[i] = RefreshIntervalDTO{
+				MinBalance: interval.MinBalance,
+				MaxBalance: interval.MaxBalance,
+				Interval:   int(interval.Interval.Seconds()),
+			}
+		}
+		return AutoSwitchSettingsDTO{
+			Enabled:            defaults.Enabled,
+			BalanceThreshold:   defaults.BalanceThreshold,
+			MinTargetBalance:   defaults.MinTargetBalance,
+			FolderIds:          defaults.FolderIds,
+			SubscriptionTypes:  defaults.SubscriptionTypes,
+			RefreshIntervals:   refreshIntervalsDTO,
+			NotifyOnSwitch:     defaults.NotifyOnSwitch,
+			NotifyOnLowBalance: defaults.NotifyOnLowBalance,
+		}
+	}
+	// 轉換已保存的 RefreshIntervals 為 DTO
+	refreshIntervalsDTO := make([]RefreshIntervalDTO, len(s.AutoSwitch.RefreshIntervals))
+	for i, interval := range s.AutoSwitch.RefreshIntervals {
+		refreshIntervalsDTO[i] = RefreshIntervalDTO{
+			MinBalance: interval.MinBalance,
+			MaxBalance: interval.MaxBalance,
+			Interval:   int(interval.Interval.Minutes()),
+		}
+	}
+	return AutoSwitchSettingsDTO{
+		Enabled:            s.AutoSwitch.Enabled,
+		BalanceThreshold:   s.AutoSwitch.BalanceThreshold,
+		MinTargetBalance:   s.AutoSwitch.MinTargetBalance,
+		FolderIds:          s.AutoSwitch.FolderIds,
+		SubscriptionTypes:  s.AutoSwitch.SubscriptionTypes,
+		RefreshIntervals:   refreshIntervalsDTO,
+		NotifyOnSwitch:     s.AutoSwitch.NotifyOnSwitch,
+		NotifyOnLowBalance: s.AutoSwitch.NotifyOnLowBalance,
+	}
+}
+
+// SaveAutoSwitchSettings 儲存自動切換設定
+func (a *App) SaveAutoSwitchSettings(dto AutoSwitchSettingsDTO) Result {
+	s := settings.GetCurrentSettings()
+
+	// 轉換 RefreshIntervalDTO 為 autoswitch.RefreshInterval
+	var refreshIntervals []autoswitch.RefreshInterval
+	if len(dto.RefreshIntervals) > 0 {
+		refreshIntervals = make([]autoswitch.RefreshInterval, len(dto.RefreshIntervals))
+		for i, intervalDTO := range dto.RefreshIntervals {
+			refreshIntervals[i] = autoswitch.RefreshInterval{
+				MinBalance: intervalDTO.MinBalance,
+				MaxBalance: intervalDTO.MaxBalance,
+				Interval:   time.Duration(intervalDTO.Interval) * time.Second,
+			}
+		}
+	} else {
+		// 如果為空，使用預設值
+		refreshIntervals = autoswitch.DefaultRefreshIntervals()
+	}
+
+	// 轉換 DTO 為 AutoSwitchSettings
+	autoSwitchSettings := &autoswitch.AutoSwitchSettings{
+		Enabled:            dto.Enabled,
+		BalanceThreshold:   dto.BalanceThreshold,
+		MinTargetBalance:   dto.MinTargetBalance,
+		FolderIds:          dto.FolderIds,
+		SubscriptionTypes:  dto.SubscriptionTypes,
+		RefreshIntervals:   refreshIntervals,
+		NotifyOnSwitch:     dto.NotifyOnSwitch,
+		NotifyOnLowBalance: dto.NotifyOnLowBalance,
+	}
+
+	// 更新設定
+	newSettings := &settings.Settings{
+		LowBalanceThreshold:   s.LowBalanceThreshold,
+		KiroVersion:           s.KiroVersion,
+		UseAutoDetect:         s.UseAutoDetect,
+		CustomKiroInstallPath: s.CustomKiroInstallPath,
+		WindowWidth:           s.WindowWidth,
+		WindowHeight:          s.WindowHeight,
+		AutoSwitch:            autoSwitchSettings,
+	}
+
+	if err := settings.SaveSettings(newSettings); err != nil {
+		return Result{Success: false, Message: fmt.Sprintf("儲存設定失敗: %v", err)}
+	}
+
+	// 如果監控器正在運行，更新其設定
+	autoSwitchMonitorMu.RLock()
+	monitor := autoSwitchMonitor
+	autoSwitchMonitorMu.RUnlock()
+	if monitor != nil {
+		monitor.UpdateConfig(autoSwitchSettings)
+	}
+
+	return Result{Success: true, Message: "自動切換設定已儲存"}
+}
+
+// StartAutoSwitchMonitor 啟動監控
+func (a *App) StartAutoSwitchMonitor() Result {
+	s := settings.GetCurrentSettings()
+	if s.AutoSwitch == nil {
+		s.AutoSwitch = autoswitch.DefaultAutoSwitchSettings()
+	}
+
+	autoSwitchMonitorMu.Lock()
+	defer autoSwitchMonitorMu.Unlock()
+
+	// 如果監控器已存在且正在運行，直接返回
+	if autoSwitchMonitor != nil {
+		status := autoSwitchMonitor.GetStatus()
+		if status == autoswitch.StatusRunning || status == autoswitch.StatusCooldown {
+			return Result{Success: true, Message: "監控已在運行中"}
+		}
+	}
+
+	// 建立監控器
+	autoSwitchMonitor = autoswitch.NewMonitor(autoswitch.MonitorConfig{
+		Config:   s.AutoSwitch,
+		SwitchMu: &globalSwitchMu,
+		Notifier: func(ctx context.Context, notification *autoswitch.Notification) {
+			// 發送通知到前端
+			wailsRuntime.EventsEmit(a.ctx, "auto-switch", notification)
+		},
+		RefreshFunc: func(ctx context.Context) (float64, error) {
+			// 取得當前餘額
+			currentMachineID := a.GetCurrentMachineID()
+			backupName := a.findBackupByMachineID(currentMachineID)
+			if backupName == "" {
+				return 0, fmt.Errorf("找不到當前環境的備份")
+			}
+
+			// 刷新餘額
+			result := a.RefreshBackupUsage(backupName)
+			if !result.Success {
+				return 0, fmt.Errorf("%s", result.Message)
+			}
+			return result.Balance, nil
+		},
+		SwitchFunc: func(ctx context.Context, targetName string) error {
+			result := a.SwitchToBackup(targetName)
+			if !result.Success {
+				return fmt.Errorf("%s", result.Message)
+			}
+			return nil
+		},
+		GetCurrentName: func() string {
+			return a.GetCurrentEnvironmentName()
+		},
+		GetCandidates: func() []autoswitch.CandidateSnapshot {
+			backups, err := a.GetBackupList()
+			if err != nil {
+				return nil
+			}
+			var candidates []autoswitch.CandidateSnapshot
+			for _, b := range backups {
+				candidates = append(candidates, autoswitch.CandidateSnapshot{
+					Name:             b.Name,
+					Balance:          b.Balance,
+					FolderId:         b.FolderId,
+					SubscriptionType: b.SubscriptionTitle,
+				})
+			}
+			return candidates
+		},
+		ValidateCandidate: func(ctx context.Context, candidateName string) (float64, error) {
+			// 切換前驗證候選快照餘額
+			result := a.RefreshBackupUsage(candidateName)
+			if !result.Success {
+				return 0, fmt.Errorf("%s", result.Message)
+			}
+			return result.Balance, nil
+		},
+		ConfirmAfterSwitch: func(ctx context.Context, targetName string) (float64, error) {
+			// 切換後確認目標餘額狀態
+			result := a.RefreshBackupUsage(targetName)
+			if !result.Success {
+				return 0, fmt.Errorf("%s", result.Message)
+			}
+			return result.Balance, nil
+		},
+	})
+
+	// 啟動監控
+	autoSwitchMonitor.Start()
+
+	return Result{Success: true, Message: "監控已啟動"}
+}
+
+// StopAutoSwitchMonitor 停止監控
+func (a *App) StopAutoSwitchMonitor() Result {
+	autoSwitchMonitorMu.Lock()
+	defer autoSwitchMonitorMu.Unlock()
+
+	if autoSwitchMonitor == nil {
+		return Result{Success: true, Message: "監控未啟動"}
+	}
+
+	autoSwitchMonitor.Stop()
+	return Result{Success: true, Message: "監控已停止"}
+}
+
+// GetAutoSwitchStatus 取得監控狀態
+func (a *App) GetAutoSwitchStatus() AutoSwitchStatus {
+	autoSwitchMonitorMu.RLock()
+	monitor := autoSwitchMonitor
+	autoSwitchMonitorMu.RUnlock()
+
+	if monitor == nil {
+		return AutoSwitchStatus{
+			Status:            "stopped",
+			LastBalance:       0,
+			CooldownRemaining: 0,
+			SwitchCount:       0,
+		}
+	}
+
+	status := monitor.GetStatus()
+	return AutoSwitchStatus{
+		Status:            string(status),
+		LastBalance:       monitor.GetLastBalance(),
+		CooldownRemaining: 0, // TODO: 從 SafetyState 取得
+		SwitchCount:       0, // TODO: 從 SafetyState 取得
+	}
+}
+
+// shutdown 應用程式關閉時的清理工作
+func (a *App) shutdown(ctx context.Context) {
+	autoSwitchMonitorMu.RLock()
+	monitor := autoSwitchMonitor
+	autoSwitchMonitorMu.RUnlock()
+
+	if monitor != nil {
+		monitor.Stop()
+	}
 }
