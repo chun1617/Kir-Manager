@@ -15,11 +15,11 @@ const (
 	// 預設 Kiro IDE 版本號
 	DefaultKiroVersion = "0.8.206"
 	// 預設視窗寬度
-	DefaultWindowWidth = 1230
+	DefaultWindowWidth = 1000
 	// 預設視窗高度
-	DefaultWindowHeight = 680
+	DefaultWindowHeight = 600
 	// 最小視窗寬度
-	MinWindowWidth = 1230
+	MinWindowWidth = 1040
 	// 最小視窗高度
 	MinWindowHeight = 600
 )
