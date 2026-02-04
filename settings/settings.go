@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"kiro-manager/autoswitch"
 )
 
 const (
@@ -45,6 +47,8 @@ type Settings struct {
 	WindowWidth int `json:"windowWidth,omitempty"`
 	// WindowHeight 視窗高度（像素）
 	WindowHeight int `json:"windowHeight,omitempty"`
+	// AutoSwitch 自動切換設定
+	AutoSwitch *autoswitch.AutoSwitchSettings `json:"autoSwitch,omitempty"`
 }
 
 var (

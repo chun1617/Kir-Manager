@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
 import Icon from './components/Icon.vue'
 import OAuthLogin from './components/OAuthLogin.vue'
+import TabBar from './components/settings/TabBar.vue'
+import BasicSettingsTab from './components/settings/BasicSettingsTab.vue'
+import AutoSwitchTab from './components/settings/AutoSwitchTab.vue'
+import { useSettingsPage } from './composables/useSettingsPage'
+import { SETTINGS_TABS } from './constants/settingsTabs'
+import type { RefreshRule } from './types/refreshInterval'
 
 const { t, locale } = useI18n()
+const { activeTab, isTabDisabled, handleTabChange } = useSettingsPage()
 
 // Debounce 工具函數
 function debounce<T extends (...args: any[]) => any>(
@@ -76,6 +84,30 @@ interface AppSettings {
   customKiroInstallPath: string
 }
 
+interface RefreshIntervalRule {
+  minBalance: number
+  maxBalance: number
+  interval: number
+}
+
+interface AutoSwitchSettings {
+  enabled: boolean
+  balanceThreshold: number
+  minTargetBalance: number
+  folderIds: string[]
+  subscriptionTypes: string[]
+  refreshIntervals: RefreshIntervalRule[]
+  notifyOnSwitch: boolean
+  notifyOnLowBalance: boolean
+}
+
+interface AutoSwitchStatus {
+  status: string  // "stopped", "running", "cooldown"
+  lastBalance: number
+  cooldownRemaining: number
+  switchCount: number
+}
+
 // PathDetectionResult 路徑偵測結果
 interface PathDetectionResult {
   path: string
@@ -130,6 +162,12 @@ declare global {
           OpenSSOCacheFolder(): Promise<Result>
           RepatchExtension(): Promise<Result>
           SaveWindowSize(width: number, height: number): Promise<Result>
+          // Auto Switch API
+          GetAutoSwitchSettings(): Promise<AutoSwitchSettings>
+          SaveAutoSwitchSettings(settings: AutoSwitchSettings): Promise<Result>
+          StartAutoSwitchMonitor(): Promise<Result>
+          StopAutoSwitchMonitor(): Promise<Result>
+          GetAutoSwitchStatus(): Promise<AutoSwitchStatus>
           // Folder API
           GetFolderList(): Promise<FolderItem[]>
           CreateFolder(name: string): Promise<Result>
@@ -160,7 +198,7 @@ const filterBalance = ref<string>('')
 const openFilter = ref<string | null>(null)
 // 主內容滾動區 ref（用於自動聚焦）
 const mainScrollArea = ref<HTMLElement | null>(null)
-const toast = ref<{ show: boolean; message: string; type: 'success' | 'error' }>({
+const toast = ref<{ show: boolean; message: string; type: 'success' | 'error' | 'warning' }>({
   show: false,
   message: '',
   type: 'success'
@@ -269,6 +307,44 @@ const detectingPath = ref(false)
 
 // 低餘額閾值預覽值（拖動滑桿時實時更新）
 const thresholdPreview = ref(20)
+
+// 自動切換設定
+const autoSwitchSettings = ref<AutoSwitchSettings>({
+  enabled: false,
+  balanceThreshold: 5,
+  minTargetBalance: 50,
+  folderIds: [],
+  subscriptionTypes: [],
+  refreshIntervals: [],
+  notifyOnSwitch: true,
+  notifyOnLowBalance: true
+})
+const autoSwitchStatus = ref<AutoSwitchStatus>({
+  status: 'stopped',
+  lastBalance: 0,
+  cooldownRemaining: 0,
+  switchCount: 0
+})
+const savingAutoSwitch = ref(false)
+
+// 刷新頻率規則轉換函數
+// 後端 RefreshIntervalRule 無 id，前端 RefreshRule 需要 id
+const toRefreshRules = (intervals: RefreshIntervalRule[]): RefreshRule[] => {
+  return intervals.map((r, i) => ({
+    id: `rule-${i}-${r.minBalance}-${r.maxBalance}`,
+    minBalance: r.minBalance,
+    maxBalance: r.maxBalance,
+    interval: r.interval,
+  }))
+}
+
+const toRefreshIntervals = (rules: RefreshRule[]): RefreshIntervalRule[] => {
+  return rules.map(r => ({
+    minBalance: r.minBalance,
+    maxBalance: r.maxBalance,
+    interval: r.interval,
+  }))
+}
 
 // 確認對話框狀態
 const confirmDialog = ref<{
@@ -495,7 +571,7 @@ const switchLanguage = (lang: string) => {
   localStorage.setItem('kiro-manager-lang', lang)
 }
 
-const showToast = (message: string, type: 'success' | 'error') => {
+const showToast = (message: string, type: 'success' | 'error' | 'warning') => {
   toast.value = { show: true, message, type }
   setTimeout(() => {
     toast.value.show = false
@@ -529,6 +605,7 @@ const loadBackups = async (showOverlay: boolean = true) => {
     kiroInstallPathModified.value = false // 重置修改狀態
     await checkKiroStatus()
     await loadFolders() // 載入文件夾列表
+    await loadAutoSwitchSettings() // 載入自動切換設定
   } catch (e) {
     console.error(e)
   } finally {
@@ -536,6 +613,103 @@ const loadBackups = async (showOverlay: boolean = true) => {
       loading.value = false
     }
   }
+}
+
+// 自動切換相關方法
+const loadAutoSwitchSettings = async () => {
+  try {
+    autoSwitchSettings.value = await window.go.main.App.GetAutoSwitchSettings()
+    autoSwitchStatus.value = await window.go.main.App.GetAutoSwitchStatus()
+  } catch (e) {
+    console.error('Failed to load auto switch settings:', e)
+  }
+}
+
+const saveAutoSwitchSettings = async () => {
+  savingAutoSwitch.value = true
+  try {
+    const result = await window.go.main.App.SaveAutoSwitchSettings(autoSwitchSettings.value)
+    if (result.success) {
+      showToast(t('message.success'), 'success')
+    } else {
+      showToast(result.message, 'error')
+    }
+  } finally {
+    savingAutoSwitch.value = false
+  }
+}
+
+const toggleAutoSwitch = async () => {
+  // 先保存設定，確保後端有最新的 Enabled 狀態
+  await saveAutoSwitchSettings()
+  
+  if (autoSwitchSettings.value.enabled) {
+    const result = await window.go.main.App.StartAutoSwitchMonitor()
+    if (!result.success) {
+      showToast(result.message, 'error')
+      autoSwitchSettings.value.enabled = false
+      // 回滾設定
+      await saveAutoSwitchSettings()
+    }
+  } else {
+    await window.go.main.App.StopAutoSwitchMonitor()
+  }
+  
+  // 刷新狀態顯示
+  autoSwitchStatus.value = await window.go.main.App.GetAutoSwitchStatus()
+}
+
+// 處理 AutoSwitchTab 組件的 toggle 事件
+const handleAutoSwitchToggle = async (enabled: boolean) => {
+  autoSwitchSettings.value.enabled = enabled
+  await toggleAutoSwitch()
+}
+
+// 自動切換篩選相關方法
+const availableSubscriptionTypes = ['Free', 'Pro', 'Pro+', 'Enterprise']
+
+const addAutoSwitchFolder = async (event: Event) => {
+  const select = event.target as HTMLSelectElement
+  const folderId = select.value
+  if (folderId && !autoSwitchSettings.value.folderIds.includes(folderId)) {
+    autoSwitchSettings.value.folderIds.push(folderId)
+    await saveAutoSwitchSettings()
+  }
+  select.value = ''
+}
+
+const removeAutoSwitchFolder = async (folderId: string) => {
+  autoSwitchSettings.value.folderIds = autoSwitchSettings.value.folderIds.filter(id => id !== folderId)
+  await saveAutoSwitchSettings()
+}
+
+const addAutoSwitchSubscription = async (event: Event) => {
+  const select = event.target as HTMLSelectElement
+  const subType = select.value
+  if (subType && !autoSwitchSettings.value.subscriptionTypes.includes(subType)) {
+    autoSwitchSettings.value.subscriptionTypes.push(subType)
+    await saveAutoSwitchSettings()
+  }
+  select.value = ''
+}
+
+const removeAutoSwitchSubscription = async (subType: string) => {
+  autoSwitchSettings.value.subscriptionTypes = autoSwitchSettings.value.subscriptionTypes.filter(s => s !== subType)
+  await saveAutoSwitchSettings()
+}
+
+// 刷新頻率規則相關方法
+const addRefreshRule = () => {
+  autoSwitchSettings.value.refreshIntervals.push({
+    minBalance: 0,
+    maxBalance: -1,
+    interval: 60
+  })
+}
+
+const removeRefreshRule = async (index: number) => {
+  autoSwitchSettings.value.refreshIntervals.splice(index, 1)
+  await saveAutoSwitchSettings()
 }
 
 // 文件夾相關方法
@@ -952,18 +1126,11 @@ const createBackup = async () => {
 }
 
 const switchToBackup = async (name: string) => {
-  const confirmed = await showConfirmDialog({
-    title: t('dialog.confirmTitle'),
-    message: t('message.confirmSwitch', { name }),
-    type: 'warning'
-  })
-  if (!confirmed) return
-  
   switchingBackup.value = name
   try {
     const result = await window.go.main.App.SwitchToBackup(name)
     if (result.success) {
-      showToast(t('message.restartKiro'), 'success')
+      showToast(t('message.successChange'), 'success')
       await loadBackups(false)
     } else {
       showToast(result.message, 'error')
@@ -985,7 +1152,7 @@ const restoreOriginal = async () => {
   try {
     const result = await window.go.main.App.RestoreSoftReset()
     if (result.success) {
-      showToast(t('message.restartKiro'), 'success')
+      showToast(t('message.successChange'), 'success')
       await loadBackups(false)
     } else {
       showToast(result.message, 'error')
@@ -1367,10 +1534,37 @@ onMounted(() => {
   setTimeout(() => {
     mainScrollArea.value?.focus()
   }, 100)
+  
+  // 監聽自動切換事件
+  EventsOn('auto-switch', (data: any) => {
+    switch (data.Type) {
+      case 'switch':
+        showToast(t('autoSwitch.toast.switched', { name: data.Data?.to }), 'success')
+        loadBackups(false)
+        break
+      case 'switch_fail':
+        showToast(data.Message || t('autoSwitch.toast.switchFailed'), 'error')
+        break
+      case 'low_balance':
+        showToast(t('autoSwitch.toast.lowBalance'), 'warning')
+        break
+      case 'cooldown':
+        // 更新狀態
+        loadAutoSwitchSettings()
+        break
+      case 'max_switch':
+        showToast(t('autoSwitch.toast.maxSwitchReached'), 'warning')
+        break
+      case 'no_candidates':
+        showToast(t('autoSwitch.toast.noCandidates'), 'warning')
+        break
+    }
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', saveWindowSize)
+  EventsOff('auto-switch')
 })
 </script>
 
@@ -1533,173 +1727,55 @@ onUnmounted(() => {
         
         <!-- 設定面板 -->
         <div v-if="showSettingsPanel" class="space-y-6">
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-            <!-- 左欄：Kiro 安裝路徑 + Kiro 版本號 -->
-            <div class="flex flex-col gap-6">
-              <!-- Kiro 安裝路徑設定 -->
-              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
-                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                  <Icon name="FolderOpen" class="w-5 h-5 mr-2 text-zinc-400" />
-                  {{ t('settings.kiroInstallPath') }}
-                </h4>
-                
-                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.kiroInstallPathDesc') }}</p>
-                
-                <div class="flex-1"></div>
-                
-                <!-- 狀態指示 -->
-                <div class="flex items-center gap-2 mb-3">
-                  <div :class="[
-                    'w-2 h-2 rounded-full',
-                    appSettings.customKiroInstallPath ? 'bg-app-accent' : 'bg-green-500'
-                  ]"></div>
-                  <span class="text-xs text-zinc-400">
-                    {{ appSettings.customKiroInstallPath ? t('settings.usingCustomPath') : t('settings.usingAutoDetect') }}
-                  </span>
-                </div>
-                
-                <div class="flex gap-2">
-                  <input 
-                    type="text"
-                    v-model="kiroInstallPathInput"
-                    @input="onKiroInstallPathInput"
-                    :placeholder="t('settings.kiroInstallPathPlaceholder')"
-                    class="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-300 text-sm focus:outline-none focus:border-zinc-500 placeholder-zinc-600"
-                  />
-                  <button
-                    v-if="kiroInstallPathModified"
-                    @click="saveKiroInstallPath"
-                    class="px-3 py-2 bg-app-accent hover:bg-app-accent/80 text-white rounded-lg text-sm transition-colors"
-                  >
-                    {{ t('backup.confirm') }}
-                  </button>
-                  <button
-                    v-else
-                    @click="detectKiroInstallPath"
-                    :disabled="detectingPath"
-                    class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-lg text-sm transition-colors disabled:opacity-50"
-                  >
-                    {{ detectingPath ? '...' : t('settings.detectPath') }}
-                  </button>
-                  <button
-                    v-if="appSettings.customKiroInstallPath && !kiroInstallPathModified"
-                    @click="clearKiroInstallPath"
-                    class="px-3 py-2 bg-zinc-800 hover:bg-red-900/30 border border-zinc-700 hover:border-red-800/50 text-zinc-400 hover:text-red-400 rounded-lg text-sm transition-colors"
-                  >
-                    {{ t('settings.clearPath') }}
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Kiro 版本號設定 -->
-              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
-                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                  <Icon name="Tag" class="w-5 h-5 mr-2 text-zinc-400" />
-                  {{ t('settings.kiroVersion') }}
-                  <!-- 自動偵測狀態指示 -->
-                  <span 
-                    v-if="appSettings.useAutoDetect" 
-                    class="ml-3 px-2 py-0.5 rounded text-[10px] bg-app-success/20 text-app-success border border-app-success/30"
-                  >
-                    {{ t('settings.autoDetectActive') }}
-                  </span>
-                </h4>
-                
-                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.kiroVersionDesc') }}</p>
-                
-                <div class="flex-1"></div>
-                
-                <div class="flex items-center gap-2">
-                  <input 
-                    v-model="kiroVersionInput"
-                    @input="onKiroVersionInput"
-                    type="text"
-                    :placeholder="t('settings.kiroVersionPlaceholder')"
-                    class="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 text-sm font-mono focus:outline-none focus:border-app-accent transition-colors"
-                  />
-                  <button 
-                    @click="detectKiroVersion"
-                    :disabled="detectingVersion || appSettings.useAutoDetect"
-                    class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-200 rounded-lg text-sm transition-colors flex items-center gap-2"
-                  >
-                    <Icon v-if="detectingVersion" name="RefreshCw" class="w-4 h-4 animate-spin" />
-                    <Icon v-else name="Search" class="w-4 h-4" />
-                    {{ t('settings.detectVersion') }}
-                  </button>
-                  <button 
-                    @click="saveKiroVersion"
-                    :disabled="!kiroVersionModified"
-                    class="px-3 py-2 bg-app-accent hover:bg-app-accent/80 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
-                  >
-                    {{ t('backup.confirm') }}
-                  </button>
-                </div>
-              </div>
-            </div>
+          <!-- Tab 導航 -->
+          <TabBar
+            :tabs="SETTINGS_TABS"
+            :active-tab="activeTab"
+            :disabled="isTabDisabled"
+            @update:active-tab="handleTabChange"
+          />
           
-            <!-- 右欄：介面語言 + 低餘額設置 -->
-            <div class="flex flex-col gap-6">
-              <!-- 語言設定 -->
-              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
-                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                  <Icon name="Globe" class="w-5 h-5 mr-2 text-zinc-400" />
-                  {{ t('settings.language') }}
-                </h4>
-                
-                <div class="flex-1"></div>
-                
-                <div class="flex gap-3">
-                  <button 
-                    v-for="lang in ['zh-TW', 'zh-CN']" 
-                    :key="lang"
-                    @click="switchLanguage(lang)"
-                    :class="[
-                      'flex-1 py-3 px-4 rounded-lg border transition-all text-sm',
-                      locale === lang 
-                        ? 'bg-zinc-800 border-zinc-600 text-zinc-200' 
-                        : 'border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-300'
-                    ]"
-                  >
-                    {{ lang === 'zh-TW' ? t('language.zhTW') : t('language.zhCN') }}
-                  </button>
-                </div>
-              </div>
-              
-              <!-- 低餘額閾值設定 -->
-              <div class="bg-zinc-900 border border-app-border rounded-xl p-6 flex-1 flex flex-col">
-                <h4 class="text-zinc-300 font-medium mb-4 flex items-center">
-                  <Icon name="AlertTriangle" class="w-5 h-5 mr-2 text-zinc-400" />
-                  {{ t('settings.lowBalanceThreshold') }}
-                </h4>
-                
-                <p class="text-zinc-500 text-sm mb-4">{{ t('settings.lowBalanceThresholdDesc') }}</p>
-                
-                <div class="flex-1"></div>
-                
-                <div class="flex items-center gap-4">
-                  <input 
-                    type="range" 
-                    min="0" 
-                    max="100" 
-                    step="5"
-                    :value="thresholdPreview"
-                    @input="(e) => thresholdPreview = Number((e.target as HTMLInputElement).value)"
-                    @change="(e) => saveLowBalanceThreshold(Number((e.target as HTMLInputElement).value) / 100)"
-                    class="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-app-accent"
-                  />
-                  <span class="text-zinc-200 font-mono text-sm w-12 text-right">
-                    {{ thresholdPreview }}%
-                  </span>
-                </div>
-                
-                <div class="flex justify-between text-xs text-zinc-500 mt-2">
-                  <span>0%</span>
-                  <span>50%</span>
-                  <span>100%</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <!-- 基礎設定分頁 -->
+          <BasicSettingsTab
+            v-if="activeTab === 'basic'"
+            :kiro-install-path="kiroInstallPathInput"
+            :kiro-version="kiroVersionInput"
+            :language="locale"
+            :low-balance-threshold="appSettings.lowBalanceThreshold"
+            :detecting-version="detectingVersion"
+            :detecting-path="detectingPath"
+            @update:kiro-install-path="kiroInstallPathInput = $event; onKiroInstallPathInput()"
+            @update:kiro-version="kiroVersionInput = $event; onKiroVersionInput()"
+            @update:language="switchLanguage"
+            @update:low-balance-threshold="saveLowBalanceThreshold"
+            @detect-version="detectKiroVersion"
+            @detect-path="detectKiroInstallPath"
+            @save-version="saveKiroVersion"
+            @save-path="saveKiroInstallPath"
+          />
+          
+          <!-- 自動切換分頁 -->
+          <AutoSwitchTab
+            v-if="activeTab === 'autoSwitch'"
+            :auto-switch-enabled="autoSwitchSettings.enabled"
+            :balance-threshold="autoSwitchSettings.balanceThreshold"
+            :min-target-balance="autoSwitchSettings.minTargetBalance"
+            :monitor-status="autoSwitchStatus.status as 'stopped' | 'running' | 'cooldown'"
+            :folders="folders"
+            :selected-folder-ids="autoSwitchSettings.folderIds"
+            :selected-subscription-types="autoSwitchSettings.subscriptionTypes"
+            :notify-on-switch="autoSwitchSettings.notifyOnSwitch"
+            :notify-on-low-balance="autoSwitchSettings.notifyOnLowBalance"
+            :refresh-rules="toRefreshRules(autoSwitchSettings.refreshIntervals)"
+            @toggle="handleAutoSwitchToggle"
+            @update:balance-threshold="autoSwitchSettings.balanceThreshold = $event; saveAutoSwitchSettings()"
+            @update:min-target-balance="autoSwitchSettings.minTargetBalance = $event; saveAutoSwitchSettings()"
+            @update:selected-folder-ids="autoSwitchSettings.folderIds = $event; saveAutoSwitchSettings()"
+            @update:selected-subscription-types="autoSwitchSettings.subscriptionTypes = $event; saveAutoSwitchSettings()"
+            @update:notify-on-switch="autoSwitchSettings.notifyOnSwitch = $event; saveAutoSwitchSettings()"
+            @update:notify-on-low-balance="autoSwitchSettings.notifyOnLowBalance = $event; saveAutoSwitchSettings()"
+            @update:refresh-rules="autoSwitchSettings.refreshIntervals = toRefreshIntervals($event); saveAutoSwitchSettings()"
+          />
         </div>
         
         <!-- OAuth 登入頁面 -->
@@ -1967,7 +2043,7 @@ onUnmounted(() => {
                   {{ resetting ? t('app.processing') : t('restore.reset') }}
                 </span>
                 <span :class="['text-[10px]', resetting ? 'text-zinc-200' : 'text-zinc-500 group-hover:text-zinc-300']">
-                  {{ resetting ? t('message.restartKiro') : t('restore.resetDesc') }}
+                  {{ resetting ? t('message.successChange') : t('restore.resetDesc') }}
                 </span>
               </div>
             </button>
@@ -2757,5 +2833,75 @@ onUnmounted(() => {
 .slide-leave-to {
   transform: translateX(100%);
   opacity: 0;
+}
+
+/* 刷新頻率設定樣式 */
+.refresh-intervals-list {
+  margin: 8px 0;
+}
+
+.refresh-interval-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: rgb(39 39 42);
+  border-radius: 4px;
+}
+
+.interval-inputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.interval-input {
+  width: 60px;
+  padding: 4px 8px;
+  border: 1px solid rgb(63 63 70);
+  border-radius: 4px;
+  background: rgb(24 24 27);
+  color: rgb(212 212 216);
+  font-size: 12px;
+}
+
+.interval-separator {
+  color: rgb(161 161 170);
+  font-size: 12px;
+}
+
+.interval-unit {
+  color: rgb(161 161 170);
+  font-size: 12px;
+}
+
+.btn-remove {
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  color: rgb(161 161 170);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-remove:hover {
+  color: #ef4444;
+}
+
+.btn-add-rule {
+  padding: 6px 12px;
+  background: rgb(39 39 42);
+  border: 1px dashed rgb(63 63 70);
+  border-radius: 4px;
+  color: rgb(161 161 170);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-add-rule:hover {
+  border-color: var(--app-accent, #3b82f6);
+  color: var(--app-accent, #3b82f6);
 }
 </style>

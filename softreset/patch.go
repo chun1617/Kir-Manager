@@ -13,12 +13,13 @@ import (
 
 const (
 	// PatchMarker 用於識別是否已 patch 的標記
-	PatchMarker    = "/* KIRO_MANAGER_PATCH_V3 */"
+	PatchMarker    = "/* KIRO_MANAGER_PATCH_V4 */"
 	PatchEndMarker = "/* END_KIRO_MANAGER_PATCH */"
 	BackupSuffix   = ".kiro-manager-backup"
 	// OldPatchMarker 用於識別舊版 patch，需要重新 patch
 	OldPatchMarker   = "/* KIRO_MANAGER_PATCH_V1 */"
 	OldPatchMarkerV2 = "/* KIRO_MANAGER_PATCH_V2 */"
+	OldPatchMarkerV3 = "/* KIRO_MANAGER_PATCH_V3 */"
 )
 
 var (
@@ -29,19 +30,38 @@ var (
 )
 
 // patchCode 注入的 JavaScript 程式碼
-// V3: 底層全面攔截 - 覆蓋 vscode.env.machineId, node-machine-id, child_process, fs
-const patchCode = `/* KIRO_MANAGER_PATCH_V3 */
+// V4: 動態讀取 - 每次訪問時從檔案讀取，無需重啟即可生效
+const patchCode = `/* KIRO_MANAGER_PATCH_V4 */
 (function() {
   const fs = require('fs');
   const path = require('path');
   const os = require('os');
   const childProcess = require('child_process');
   const customIdPath = path.join(os.homedir(), '.kiro', 'custom-machine-id');
-  let customMachineId = null;
-  try {
-    customMachineId = fs.readFileSync(customIdPath, 'utf8').trim();
-  } catch {}
-  if (!customMachineId) return;
+
+  // V4: 動態讀取函數，每次調用都從檔案讀取
+  function getCustomMachineId() {
+    try {
+      let content = fs.readFileSync(customIdPath, 'utf8');
+      // 移除控制字元
+      content = content.replace(/[\x00-\x1F\x7F]/g, '');
+      // trim 空白
+      content = content.trim();
+      // 空內容檢查
+      if (!content) return null;
+      // 格式驗證：64 字元 hex
+      if (!/^[a-f0-9]{64}$/i.test(content)) {
+        console.warn('[KIRO_PATCH] Invalid machine ID format, ignoring');
+        return null;
+      }
+      return content;
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        console.warn('[KIRO_PATCH] Failed to read custom-machine-id:', err.code || err.message);
+      }
+      return null;
+    }
+  }
 
   // 1. 攔截 Module._load（vscode.env.machineId 和 node-machine-id）
   const Module = require('module');
@@ -49,12 +69,16 @@ const patchCode = `/* KIRO_MANAGER_PATCH_V3 */
   Module._load = function(request, parent, isMain) {
     const mod = originalLoad.call(this, request, parent, isMain);
     if (request === 'vscode') {
+      const originalEnv = mod.env;
       return new Proxy(mod, {
         get(target, prop) {
           if (prop === 'env') {
-            return new Proxy(target.env, {
+            return new Proxy(originalEnv, {
               get(envTarget, envProp) {
-                if (envProp === 'machineId') return customMachineId;
+                if (envProp === 'machineId') {
+                  const customId = getCustomMachineId();
+                  return customId !== null ? customId : envTarget[envProp];
+                }
                 return envTarget[envProp];
               }
             });
@@ -64,10 +88,22 @@ const patchCode = `/* KIRO_MANAGER_PATCH_V3 */
       });
     }
     if (mod && typeof mod === 'object' && (typeof mod.machineIdSync === 'function' || typeof mod.machineId === 'function')) {
+      const originalMachineIdSync = mod.machineIdSync;
+      const originalMachineId = mod.machineId;
       return new Proxy(mod, {
         get(target, prop) {
-          if (prop === 'machineIdSync') return () => customMachineId;
-          if (prop === 'machineId') return () => Promise.resolve(customMachineId);
+          if (prop === 'machineIdSync') {
+            return function() {
+              const customId = getCustomMachineId();
+              return customId !== null ? customId : originalMachineIdSync.call(target);
+            };
+          }
+          if (prop === 'machineId') {
+            return async function() {
+              const customId = getCustomMachineId();
+              return customId !== null ? customId : originalMachineId.call(target);
+            };
+          }
           return target[prop];
         }
       });
@@ -86,16 +122,22 @@ const patchCode = `/* KIRO_MANAGER_PATCH_V3 */
   const originalExec = childProcess.exec;
   childProcess.exec = function(cmd, options, callback) {
     if (isMachineIdCmd(cmd)) {
-      if (typeof options === 'function') { callback = options; options = {}; }
-      setImmediate(() => callback && callback(null, customMachineId, ''));
-      return { on: () => {}, stdout: { on: () => {} }, stderr: { on: () => {} } };
+      const customId = getCustomMachineId();
+      if (customId !== null) {
+        if (typeof options === 'function') { callback = options; options = {}; }
+        setImmediate(() => callback && callback(null, customId, ''));
+        return { on: () => {}, stdout: { on: () => {} }, stderr: { on: () => {} } };
+      }
     }
     return originalExec.apply(this, arguments);
   };
 
   const originalExecSync = childProcess.execSync;
   childProcess.execSync = function(cmd, options) {
-    if (isMachineIdCmd(cmd)) return Buffer.from(customMachineId);
+    if (isMachineIdCmd(cmd)) {
+      const customId = getCustomMachineId();
+      if (customId !== null) return Buffer.from(customId);
+    }
     return originalExecSync.apply(this, arguments);
   };
 
@@ -106,23 +148,32 @@ const patchCode = `/* KIRO_MANAGER_PATCH_V3 */
   const originalReadFile = fs.readFile;
   fs.readFile = function(filePath, options, callback) {
     if (isMachineIdPath(filePath)) {
-      if (typeof options === 'function') { callback = options; }
-      setImmediate(() => callback && callback(null, customMachineId));
-      return;
+      const customId = getCustomMachineId();
+      if (customId !== null) {
+        if (typeof options === 'function') { callback = options; }
+        setImmediate(() => callback && callback(null, customId));
+        return;
+      }
     }
     return originalReadFile.apply(this, arguments);
   };
 
   const originalReadFileSync = fs.readFileSync;
   fs.readFileSync = function(filePath, options) {
-    if (isMachineIdPath(filePath)) return customMachineId;
+    if (isMachineIdPath(filePath)) {
+      const customId = getCustomMachineId();
+      if (customId !== null) return customId;
+    }
     return originalReadFileSync.apply(this, arguments);
   };
 
   if (fs.promises) {
     const originalPromisesReadFile = fs.promises.readFile;
     fs.promises.readFile = async function(filePath, options) {
-      if (isMachineIdPath(filePath)) return customMachineId;
+      if (isMachineIdPath(filePath)) {
+        const customId = getCustomMachineId();
+        if (customId !== null) return customId;
+      }
       return originalPromisesReadFile.apply(this, arguments);
     };
   }
@@ -184,7 +235,7 @@ func IsPatched() (bool, error) {
 	return strings.Contains(string(buf[:n]), PatchMarker), nil
 }
 
-// IsOldPatched 檢查 extension.js 是否被舊版 patch（V1 或 V2）
+// IsOldPatched 檢查 extension.js 是否被舊版 patch（V1, V2 或 V3）
 func IsOldPatched() (bool, error) {
 	extPath, err := GetExtensionJSPath()
 	if err != nil {
@@ -204,8 +255,10 @@ func IsOldPatched() (bool, error) {
 	}
 
 	content := string(buf[:n])
-	// 有舊版標記（V1 或 V2）但沒有新版標記（V3）
-	hasOldPatch := strings.Contains(content, OldPatchMarker) || strings.Contains(content, OldPatchMarkerV2)
+	// 有舊版標記（V1, V2 或 V3）但沒有新版標記（V4）
+	hasOldPatch := strings.Contains(content, OldPatchMarker) ||
+		strings.Contains(content, OldPatchMarkerV2) ||
+		strings.Contains(content, OldPatchMarkerV3)
 	hasCurrentPatch := strings.Contains(content, PatchMarker)
 	return hasOldPatch && !hasCurrentPatch, nil
 }

@@ -39,6 +39,84 @@ export namespace main {
 	        this.customKiroInstallPath = source["customKiroInstallPath"];
 	    }
 	}
+	export class RefreshIntervalDTO {
+	    minBalance: number;
+	    maxBalance: number;
+	    interval: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RefreshIntervalDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.minBalance = source["minBalance"];
+	        this.maxBalance = source["maxBalance"];
+	        this.interval = source["interval"];
+	    }
+	}
+	export class AutoSwitchSettingsDTO {
+	    enabled: boolean;
+	    balanceThreshold: number;
+	    minTargetBalance: number;
+	    folderIds: string[];
+	    subscriptionTypes: string[];
+	    refreshIntervals: RefreshIntervalDTO[];
+	    notifyOnSwitch: boolean;
+	    notifyOnLowBalance: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoSwitchSettingsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.balanceThreshold = source["balanceThreshold"];
+	        this.minTargetBalance = source["minTargetBalance"];
+	        this.folderIds = source["folderIds"];
+	        this.subscriptionTypes = source["subscriptionTypes"];
+	        this.refreshIntervals = this.convertValues(source["refreshIntervals"], RefreshIntervalDTO);
+	        this.notifyOnSwitch = source["notifyOnSwitch"];
+	        this.notifyOnLowBalance = source["notifyOnLowBalance"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AutoSwitchStatus {
+	    status: string;
+	    lastBalance: number;
+	    cooldownRemaining: number;
+	    switchCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoSwitchStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.lastBalance = source["lastBalance"];
+	        this.cooldownRemaining = source["cooldownRemaining"];
+	        this.switchCount = source["switchCount"];
+	    }
+	}
 	export class BackupItem {
 	    name: string;
 	    backupTime: string;
@@ -173,6 +251,7 @@ export namespace main {
 	        this.failureReasons = source["failureReasons"];
 	    }
 	}
+	
 	export class Result {
 	    success: boolean;
 	    message: string;
