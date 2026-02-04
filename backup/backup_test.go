@@ -178,6 +178,7 @@ func TestProperty_TokenUpdatePreservesOriginalFields(t *testing.T) {
 
 // writeBackupTokenToPath 是 WriteBackupToken 的內部版本，直接操作指定路徑
 // 用於測試時避免依賴 GetBackupPath
+// 注意：此函數必須與 WriteBackupToken 使用相同的 struct-based 邏輯
 func writeBackupTokenToPath(tokenPath string, accessToken string, expiresAt string) error {
 	// 讀取現有 token 檔案以保留原始欄位
 	data, err := os.ReadFile(tokenPath)
@@ -185,23 +186,55 @@ func writeBackupTokenToPath(tokenPath string, accessToken string, expiresAt stri
 		return err
 	}
 
-	// 使用 map 來保留所有原始欄位
+	// 先解析到 map 以讀取原始值
 	var tokenMap map[string]interface{}
 	if err := json.Unmarshal(data, &tokenMap); err != nil {
 		return err
 	}
 
-	// 僅更新 accessToken 和 expiresAt 欄位
-	tokenMap["accessToken"] = accessToken
-	tokenMap["expiresAt"] = expiresAt
+	// 使用與 WriteBackupToken 相同的 struct-based 邏輯
+	// 這確保測試反映真實行為
+	orderedToken := struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		ProfileArn   string `json:"profileArn,omitempty"`
+		ExpiresAt    string `json:"expiresAt"`
+		AuthMethod   string `json:"authMethod,omitempty"`
+		Provider     string `json:"provider,omitempty"`
+		ClientIdHash string `json:"clientIdHash,omitempty"`
+		Region       string `json:"region,omitempty"`
+		TokenType    string `json:"tokenType,omitempty"`
+		StartURL     string `json:"startUrl,omitempty"`
+	}{
+		AccessToken:  accessToken,
+		RefreshToken: getStringFromMapTest(tokenMap, "refreshToken"),
+		ProfileArn:   getStringFromMapTest(tokenMap, "profileArn"),
+		ExpiresAt:    expiresAt,
+		AuthMethod:   getStringFromMapTest(tokenMap, "authMethod"),
+		Provider:     getStringFromMapTest(tokenMap, "provider"),
+		ClientIdHash: getStringFromMapTest(tokenMap, "clientIdHash"),
+		Region:       getStringFromMapTest(tokenMap, "region"),
+		TokenType:    getStringFromMapTest(tokenMap, "tokenType"),
+		StartURL:     getStringFromMapTest(tokenMap, "startUrl"),
+	}
 
 	// 將更新後的 token 寫回檔案
-	updatedData, err := json.MarshalIndent(tokenMap, "", "  ")
+	updatedData, err := json.MarshalIndent(orderedToken, "", "  ")
 	if err != nil {
 		return err
 	}
 
 	return os.WriteFile(tokenPath, updatedData, 0644)
+}
+
+// getStringFromMapTest 從 map 中安全地取得字串值（測試用）
+func getStringFromMapTest(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // compareValues 比較兩個值是否相等（處理 map 和其他類型）
@@ -232,6 +265,8 @@ func TestWriteBackupToken_BackupNotFound(t *testing.T) {
 }
 
 // TestWriteBackupToken_PreservesAllFields 測試欄位保留功能
+// 注意：此測試驗證 struct-based 邏輯，只保留 orderedKiroAuthToken 中定義的欄位
+// 未知欄位（如 customField）會被丟棄，這是設計上的限制
 func TestWriteBackupToken_PreservesAllFields(t *testing.T) {
 	// 建立臨時測試目錄
 	tempDir, err := os.MkdirTemp("", "backup_test_*")
@@ -246,7 +281,7 @@ func TestWriteBackupToken_PreservesAllFields(t *testing.T) {
 		t.Fatalf("Failed to create backup dir: %v", err)
 	}
 
-	// 建立包含多個欄位的原始 token
+	// 建立包含多個欄位的原始 token（只包含 orderedKiroAuthToken 支援的欄位）
 	originalToken := map[string]interface{}{
 		"accessToken":  "old-access-token",
 		"expiresAt":    "2025-12-08T12:00:00Z",
@@ -254,7 +289,6 @@ func TestWriteBackupToken_PreservesAllFields(t *testing.T) {
 		"provider":     "Github",
 		"authMethod":   "social",
 		"profileArn":   "arn:aws:kiro::123456789012:profile/test",
-		"customField":  "should-be-preserved",
 	}
 
 	// 寫入原始 token
@@ -305,9 +339,6 @@ func TestWriteBackupToken_PreservesAllFields(t *testing.T) {
 	}
 	if updatedToken["profileArn"] != "arn:aws:kiro::123456789012:profile/test" {
 		t.Errorf("profileArn changed: got %v", updatedToken["profileArn"])
-	}
-	if updatedToken["customField"] != "should-be-preserved" {
-		t.Errorf("customField changed: got %v", updatedToken["customField"])
 	}
 }
 
@@ -758,4 +789,316 @@ func validateSnapshotNameWithPath(rootPath, name string) error {
 	}
 
 	return nil
+}
+
+
+// ============================================================================
+// IdC Token Field Preservation Tests (Feature: idc-token-field-preservation)
+// ============================================================================
+
+// TestWriteBackupToken_PreservesIdCFields 測試 IdC 欄位 (clientIdHash, region) 保留
+// **Validates: Scenario 1 - IdC Token 刷新後保留 clientIdHash 欄位**
+func TestWriteBackupToken_PreservesIdCFields(t *testing.T) {
+	// 建立臨時測試目錄
+	tempDir, err := os.MkdirTemp("", "idc_field_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 建立測試備份目錄
+	backupPath := filepath.Join(tempDir, "test_idc_backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	// 建立包含 IdC 欄位的原始 token
+	originalToken := map[string]interface{}{
+		"accessToken":  "old-access-token",
+		"refreshToken": "my-refresh-token",
+		"profileArn":   "arn:aws:kiro::123456789012:profile/test",
+		"expiresAt":    "2025-12-08T12:00:00Z",
+		"authMethod":   "idc",
+		"provider":     "IdentityCenter",
+		"clientIdHash": "abc123def456",  // IdC 特有欄位
+		"region":       "us-east-1",     // IdC 特有欄位
+	}
+
+	// 寫入原始 token
+	tokenPath := filepath.Join(backupPath, KiroAuthTokenFile)
+	originalData, _ := json.MarshalIndent(originalToken, "", "  ")
+	if err := os.WriteFile(tokenPath, originalData, 0644); err != nil {
+		t.Fatalf("Failed to write original token: %v", err)
+	}
+
+	// 使用 writeBackupTokenToPath 更新 token
+	newAccessToken := "new-access-token-12345"
+	newExpiresAt := "2025-12-09T18:00:00Z"
+	err = writeBackupTokenToPath(tokenPath, newAccessToken, newExpiresAt)
+	if err != nil {
+		t.Fatalf("Failed to write backup token: %v", err)
+	}
+
+	// 讀取更新後的 token
+	updatedData, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to read updated token: %v", err)
+	}
+
+	var updatedToken map[string]interface{}
+	if err := json.Unmarshal(updatedData, &updatedToken); err != nil {
+		t.Fatalf("Failed to unmarshal updated token: %v", err)
+	}
+
+	// 驗證 IdC 欄位被保留
+	if updatedToken["clientIdHash"] != "abc123def456" {
+		t.Errorf("clientIdHash not preserved: got %v, expected %v",
+			updatedToken["clientIdHash"], "abc123def456")
+	}
+	if updatedToken["region"] != "us-east-1" {
+		t.Errorf("region not preserved: got %v, expected %v",
+			updatedToken["region"], "us-east-1")
+	}
+
+	// 驗證更新的欄位
+	if updatedToken["accessToken"] != newAccessToken {
+		t.Errorf("accessToken not updated: got %v, expected %v",
+			updatedToken["accessToken"], newAccessToken)
+	}
+	if updatedToken["expiresAt"] != newExpiresAt {
+		t.Errorf("expiresAt not updated: got %v, expected %v",
+			updatedToken["expiresAt"], newExpiresAt)
+	}
+}
+
+// TestWriteBackupToken_PreservesOptionalFields 測試可選欄位 (tokenType, startUrl) 保留
+// **Validates: Scenario 4 - 保留 tokenType 和 startUrl 可選欄位**
+func TestWriteBackupToken_PreservesOptionalFields(t *testing.T) {
+	// 建立臨時測試目錄
+	tempDir, err := os.MkdirTemp("", "optional_field_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 建立測試備份目錄
+	backupPath := filepath.Join(tempDir, "test_optional_backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	// 建立包含所有可選欄位的原始 token
+	originalToken := map[string]interface{}{
+		"accessToken":  "old-access-token",
+		"refreshToken": "my-refresh-token",
+		"profileArn":   "arn:aws:kiro::123456789012:profile/test",
+		"expiresAt":    "2025-12-08T12:00:00Z",
+		"authMethod":   "idc",
+		"provider":     "IdentityCenter",
+		"clientIdHash": "abc123def456",
+		"region":       "us-west-2",
+		"tokenType":    "Bearer",                                    // 可選欄位
+		"startUrl":     "https://d-1234567890.awsapps.com/start",    // 可選欄位
+	}
+
+	// 寫入原始 token
+	tokenPath := filepath.Join(backupPath, KiroAuthTokenFile)
+	originalData, _ := json.MarshalIndent(originalToken, "", "  ")
+	if err := os.WriteFile(tokenPath, originalData, 0644); err != nil {
+		t.Fatalf("Failed to write original token: %v", err)
+	}
+
+	// 使用 writeBackupTokenToPath 更新 token
+	newAccessToken := "new-access-token-67890"
+	newExpiresAt := "2025-12-10T20:00:00Z"
+	err = writeBackupTokenToPath(tokenPath, newAccessToken, newExpiresAt)
+	if err != nil {
+		t.Fatalf("Failed to write backup token: %v", err)
+	}
+
+	// 讀取更新後的 token
+	updatedData, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to read updated token: %v", err)
+	}
+
+	var updatedToken map[string]interface{}
+	if err := json.Unmarshal(updatedData, &updatedToken); err != nil {
+		t.Fatalf("Failed to unmarshal updated token: %v", err)
+	}
+
+	// 驗證可選欄位被保留
+	if updatedToken["tokenType"] != "Bearer" {
+		t.Errorf("tokenType not preserved: got %v, expected %v",
+			updatedToken["tokenType"], "Bearer")
+	}
+	if updatedToken["startUrl"] != "https://d-1234567890.awsapps.com/start" {
+		t.Errorf("startUrl not preserved: got %v, expected %v",
+			updatedToken["startUrl"], "https://d-1234567890.awsapps.com/start")
+	}
+
+	// 驗證 IdC 欄位也被保留
+	if updatedToken["clientIdHash"] != "abc123def456" {
+		t.Errorf("clientIdHash not preserved: got %v", updatedToken["clientIdHash"])
+	}
+	if updatedToken["region"] != "us-west-2" {
+		t.Errorf("region not preserved: got %v", updatedToken["region"])
+	}
+}
+
+// TestWriteBackupToken_OmitsEmptyOptionalFields 測試空值欄位不輸出
+// **Validates: Scenario 5 - 處理不包含可選欄位的 Token**
+func TestWriteBackupToken_OmitsEmptyOptionalFields(t *testing.T) {
+	// 建立臨時測試目錄
+	tempDir, err := os.MkdirTemp("", "empty_field_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 建立測試備份目錄
+	backupPath := filepath.Join(tempDir, "test_empty_backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	// 建立不包含可選欄位的 Social Token
+	originalToken := map[string]interface{}{
+		"accessToken":  "old-access-token",
+		"refreshToken": "my-refresh-token",
+		"profileArn":   "arn:aws:kiro::123456789012:profile/test",
+		"expiresAt":    "2025-12-08T12:00:00Z",
+		"authMethod":   "social",
+		"provider":     "Github",
+		// 注意：沒有 clientIdHash, region, tokenType, startUrl
+	}
+
+	// 寫入原始 token
+	tokenPath := filepath.Join(backupPath, KiroAuthTokenFile)
+	originalData, _ := json.MarshalIndent(originalToken, "", "  ")
+	if err := os.WriteFile(tokenPath, originalData, 0644); err != nil {
+		t.Fatalf("Failed to write original token: %v", err)
+	}
+
+	// 使用 writeBackupTokenToPath 更新 token
+	newAccessToken := "new-access-token-social"
+	newExpiresAt := "2025-12-11T22:00:00Z"
+	err = writeBackupTokenToPath(tokenPath, newAccessToken, newExpiresAt)
+	if err != nil {
+		t.Fatalf("Failed to write backup token: %v", err)
+	}
+
+	// 讀取更新後的 token
+	updatedData, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to read updated token: %v", err)
+	}
+
+	var updatedToken map[string]interface{}
+	if err := json.Unmarshal(updatedData, &updatedToken); err != nil {
+		t.Fatalf("Failed to unmarshal updated token: %v", err)
+	}
+
+	// 驗證空值欄位不存在（或為空字串）
+	// 注意：writeBackupTokenToPath 使用 map 方式，所以不會新增不存在的欄位
+	if _, exists := updatedToken["clientIdHash"]; exists && updatedToken["clientIdHash"] != "" {
+		t.Errorf("clientIdHash should not exist or be empty for Social token, got %v",
+			updatedToken["clientIdHash"])
+	}
+	if _, exists := updatedToken["region"]; exists && updatedToken["region"] != "" {
+		t.Errorf("region should not exist or be empty for Social token, got %v",
+			updatedToken["region"])
+	}
+	if _, exists := updatedToken["tokenType"]; exists && updatedToken["tokenType"] != "" {
+		t.Errorf("tokenType should not exist or be empty for Social token, got %v",
+			updatedToken["tokenType"])
+	}
+	if _, exists := updatedToken["startUrl"]; exists && updatedToken["startUrl"] != "" {
+		t.Errorf("startUrl should not exist or be empty for Social token, got %v",
+			updatedToken["startUrl"])
+	}
+
+	// 驗證基本欄位仍然存在
+	if updatedToken["accessToken"] != newAccessToken {
+		t.Errorf("accessToken not updated: got %v", updatedToken["accessToken"])
+	}
+	if updatedToken["authMethod"] != "social" {
+		t.Errorf("authMethod not preserved: got %v", updatedToken["authMethod"])
+	}
+	if updatedToken["provider"] != "Github" {
+		t.Errorf("provider not preserved: got %v", updatedToken["provider"])
+	}
+}
+
+// TestWriteBackupToken_SocialTokenUnaffected 測試 Social Token 不受影響
+// **Validates: Scenario 2 - Social Token 刷新後不受影響**
+func TestWriteBackupToken_SocialTokenUnaffected(t *testing.T) {
+	// 建立臨時測試目錄
+	tempDir, err := os.MkdirTemp("", "social_token_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 建立測試備份目錄
+	backupPath := filepath.Join(tempDir, "test_social_backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	// 建立 Social Token（不包含 IdC 欄位）
+	originalToken := map[string]interface{}{
+		"accessToken":  "social-access-token",
+		"refreshToken": "social-refresh-token",
+		"profileArn":   "arn:aws:kiro::123456789012:profile/social",
+		"expiresAt":    "2025-12-08T12:00:00Z",
+		"authMethod":   "social",
+		"provider":     "Google",
+	}
+
+	// 寫入原始 token
+	tokenPath := filepath.Join(backupPath, KiroAuthTokenFile)
+	originalData, _ := json.MarshalIndent(originalToken, "", "  ")
+	if err := os.WriteFile(tokenPath, originalData, 0644); err != nil {
+		t.Fatalf("Failed to write original token: %v", err)
+	}
+
+	// 使用 writeBackupTokenToPath 更新 token
+	newAccessToken := "new-social-access-token"
+	newExpiresAt := "2025-12-12T10:00:00Z"
+	err = writeBackupTokenToPath(tokenPath, newAccessToken, newExpiresAt)
+	if err != nil {
+		t.Fatalf("Failed to write backup token: %v", err)
+	}
+
+	// 讀取更新後的 token
+	updatedData, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to read updated token: %v", err)
+	}
+
+	var updatedToken map[string]interface{}
+	if err := json.Unmarshal(updatedData, &updatedToken); err != nil {
+		t.Fatalf("Failed to unmarshal updated token: %v", err)
+	}
+
+	// 驗證 Social Token 的所有欄位正確
+	if updatedToken["accessToken"] != newAccessToken {
+		t.Errorf("accessToken not updated: got %v", updatedToken["accessToken"])
+	}
+	if updatedToken["expiresAt"] != newExpiresAt {
+		t.Errorf("expiresAt not updated: got %v", updatedToken["expiresAt"])
+	}
+	if updatedToken["refreshToken"] != "social-refresh-token" {
+		t.Errorf("refreshToken changed: got %v", updatedToken["refreshToken"])
+	}
+	if updatedToken["authMethod"] != "social" {
+		t.Errorf("authMethod changed: got %v", updatedToken["authMethod"])
+	}
+	if updatedToken["provider"] != "Google" {
+		t.Errorf("provider changed: got %v", updatedToken["provider"])
+	}
+	if updatedToken["profileArn"] != "arn:aws:kiro::123456789012:profile/social" {
+		t.Errorf("profileArn changed: got %v", updatedToken["profileArn"])
+	}
 }

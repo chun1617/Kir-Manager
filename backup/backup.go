@@ -381,7 +381,14 @@ func DeleteBackup(name string) error {
 		return err
 	}
 
-	return os.RemoveAll(backupPath)
+	if err := os.RemoveAll(backupPath); err != nil {
+		return err
+	}
+
+	// 清理 folders.json 中的 assignment
+	UnassignSnapshot(name)
+
+	return nil
 }
 
 // GetBackupInfo 取得指定備份的詳細資訊
@@ -668,14 +675,18 @@ func WriteUsageCache(name string, cache *UsageCache) error {
 
 
 // orderedKiroAuthToken 用於確保 JSON 輸出時 key 的順序
-// 順序: accessToken, refreshToken, profileArn, expiresAt, authMethod, provider
+// 順序: accessToken, refreshToken, profileArn, expiresAt, authMethod, provider, clientIdHash, region, tokenType, startUrl
 type orderedKiroAuthToken struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`
-	ProfileArn   string `json:"profileArn"`
+	ProfileArn   string `json:"profileArn,omitempty"`
 	ExpiresAt    string `json:"expiresAt"`
-	AuthMethod   string `json:"authMethod"`
-	Provider     string `json:"provider"`
+	AuthMethod   string `json:"authMethod,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	ClientIdHash string `json:"clientIdHash,omitempty"` // IdC 特有欄位
+	Region       string `json:"region,omitempty"`       // IdC 特有欄位
+	TokenType    string `json:"tokenType,omitempty"`    // 可選欄位
+	StartURL     string `json:"startUrl,omitempty"`     // 可選欄位
 }
 
 // WriteBackupToken 將刷新後的 Token 寫入備份檔案
@@ -718,6 +729,10 @@ func WriteBackupToken(name string, accessToken string, expiresAt string) error {
 		ExpiresAt:    expiresAt,
 		AuthMethod:   getStringFromMap(tokenMap, "authMethod"),
 		Provider:     getStringFromMap(tokenMap, "provider"),
+		ClientIdHash: getStringFromMap(tokenMap, "clientIdHash"), // IdC 特有欄位
+		Region:       getStringFromMap(tokenMap, "region"),       // IdC 特有欄位
+		TokenType:    getStringFromMap(tokenMap, "tokenType"),    // 可選欄位
+		StartURL:     getStringFromMap(tokenMap, "startUrl"),     // 可選欄位
 	}
 
 	// 將更新後的 token 寫回檔案

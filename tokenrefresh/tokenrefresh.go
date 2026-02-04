@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"kiro-manager/awssso"
 	"kiro-manager/kiroversion"
 	"kiro-manager/settings"
@@ -83,12 +84,12 @@ type IdCRefreshRequest struct {
 }
 
 // IdCRefreshResponse IdC 刷新回應
-// 注意：AWS IdC OIDC API 回應使用 snake_case 欄位名稱
+// 注意：AWS IdC OIDC API 回應使用 camelCase 欄位名稱
 type IdCRefreshResponse struct {
-	AccessToken  string `json:"access_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	TokenType    string `json:"token_type"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	AccessToken  string `json:"accessToken"`
+	ExpiresIn    int    `json:"expiresIn"`
+	TokenType    string `json:"tokenType"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // CalculateExpiresAt 計算過期時間
@@ -280,10 +281,12 @@ func RefreshIdCToken(refreshToken, clientID, clientSecret string) (*TokenInfo, e
 	// 設定必要的 Headers（需求 2.3）
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", "oidc.us-east-1.amazonaws.com")
-	req.Header.Set("x-amz-user-agent", "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js api/sso-oidc#3.738.0 m/E KiroIDE")
-	req.Header.Set("User-Agent", "node")
+	req.Header.Set("x-amz-user-agent", "aws-sdk-js/3.738.0 KiroIDE")
+	req.Header.Set("User-Agent", "aws-sdk-js/3.738.0 ua/2.1 os/win32#10.0.26100 lang/js md/nodejs#22.21.1 api/sso-oidc#3.738.0 m/E KiroIDE")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Connection", "close")
+	req.Header.Set("amz-sdk-invocation-id", uuid.New().String())
+	req.Header.Set("amz-sdk-request", "attempt=1; max=4")
 
 	// 發送請求
 	client := &http.Client{Timeout: 30 * time.Second}

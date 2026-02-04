@@ -3,11 +3,17 @@
 import {main} from '../models';
 import {kiroprocess} from '../models';
 
+export function AssignSnapshotToFolder(arg1:string,arg2:string):Promise<main.Result>;
+
 export function CreateBackup(arg1:string):Promise<main.Result>;
+
+export function CreateFolder(arg1:string):Promise<main.Result>;
 
 export function CreateSnapshotFromOAuth(arg1:string,arg2:main.OAuthLoginResult):Promise<main.Result>;
 
 export function DeleteBackup(arg1:string):Promise<main.Result>;
+
+export function DeleteFolder(arg1:string,arg2:boolean):Promise<main.Result>;
 
 export function EnsureOriginalBackup():Promise<main.Result>;
 
@@ -26,6 +32,8 @@ export function GetCurrentUsageInfo():Promise<main.CurrentUsageInfo>;
 export function GetDetectedKiroInstallPath():Promise<main.Result>;
 
 export function GetDetectedKiroVersion():Promise<main.Result>;
+
+export function GetFolderList():Promise<Array<main.FolderItem>>;
 
 export function GetKiroInstallPathWithStatus():Promise<main.PathDetectionResult>;
 
@@ -51,6 +59,8 @@ export function RefreshBackupUsage(arg1:string):Promise<main.UsageCacheResult>;
 
 export function RegenerateMachineID(arg1:string):Promise<main.Result>;
 
+export function RenameFolder(arg1:string,arg2:string):Promise<main.Result>;
+
 export function RepatchExtension():Promise<main.Result>;
 
 export function RestoreSoftReset():Promise<main.Result>;
@@ -66,6 +76,8 @@ export function StartIdCLogin():Promise<main.OAuthLoginResult>;
 export function StartSocialLogin(arg1:string):Promise<main.OAuthLoginResult>;
 
 export function SwitchToBackup(arg1:string):Promise<main.Result>;
+
+export function UnassignSnapshot(arg1:string):Promise<main.Result>;
 
 export function UnpatchExtension():Promise<main.Result>;
 

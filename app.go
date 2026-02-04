@@ -79,6 +79,8 @@ type BackupItem struct {
 	Balance           float64 `json:"balance"`           // 餘額
 	IsLowBalance      bool    `json:"isLowBalance"`      // 餘額低於 20%
 	CachedAt          string  `json:"cachedAt"`          // 緩存時間（用於前端判斷冷卻期）
+	// 文件夾相關欄位
+	FolderId          string  `json:"folderId"`          // 所屬文件夾 ID，空字串表示未分類
 }
 
 // Result 通用回傳結果
@@ -167,6 +169,10 @@ func (a *App) GetBackupList() ([]BackupItem, error) {
 			}
 		}
 		// 沒有緩存的備份，用量欄位保持零值（前端顯示 "-"）
+
+		// 取得快照所屬文件夾
+		folderId, _ := backup.GetSnapshotFolderId(b.Name)
+		item.FolderId = folderId
 
 		items = append(items, item)
 	}
@@ -487,7 +493,7 @@ func (a *App) IsDeepLinkSupported() bool {
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.4.0",
+		"version":   "0.5.0",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}
@@ -1114,4 +1120,110 @@ func (a *App) ValidateSnapshotName(name string) Result {
 		return Result{Success: false, Message: err.Error()}
 	}
 	return Result{Success: true, Message: "名稱有效"}
+}
+
+
+// ============================================================================
+// 文件夾管理功能
+// ============================================================================
+
+// FolderItem 文件夾項目（前端用）
+type FolderItem struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	CreatedAt     string `json:"createdAt"`
+	Order         int    `json:"order"`
+	SnapshotCount int    `json:"snapshotCount"`
+}
+
+// GetFolderList 取得文件夾列表
+func (a *App) GetFolderList() ([]FolderItem, error) {
+	folders, err := backup.ListFolders()
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]FolderItem, len(folders))
+	for i, f := range folders {
+		items[i] = FolderItem{
+			ID:            f.ID,
+			Name:          f.Name,
+			CreatedAt:     f.CreatedAt,
+			Order:         f.Order,
+			SnapshotCount: f.SnapshotCount,
+		}
+	}
+
+	return items, nil
+}
+
+// CreateFolder 建立新文件夾
+func (a *App) CreateFolder(name string) Result {
+	folder, err := backup.CreateFolder(name)
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	return Result{Success: true, Message: folder.ID}
+}
+
+// RenameFolder 重新命名文件夾
+func (a *App) RenameFolder(id, newName string) Result {
+	if err := backup.RenameFolder(id, newName); err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	return Result{Success: true, Message: "文件夾已重新命名"}
+}
+
+// DeleteFolder 刪除文件夾
+// deleteSnapshots: true 表示一併刪除快照，false 表示移到未分類
+func (a *App) DeleteFolder(id string, deleteSnapshots bool) Result {
+	// 無論選擇哪個選項，都需要先檢查是否包含當前使用中的快照
+	// 根據規格：「無法刪除包含當前使用中環境的文件夾」
+	currentMachineID := a.GetCurrentMachineID()
+
+	// 取得文件夾中的快照
+	data, err := backup.LoadFolders()
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+
+	for snapshotName, folderId := range data.Assignments {
+		if folderId == id {
+			// 檢查這個快照是否是當前使用中的
+			mid, err := backup.ReadBackupMachineID(snapshotName)
+			if err == nil && mid.MachineID == currentMachineID {
+				return Result{Success: false, Message: "無法刪除包含當前使用中環境的文件夾"}
+			}
+		}
+	}
+
+	snapshotsToDelete, err := backup.DeleteFolder(id, deleteSnapshots)
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+
+	// 如果選擇刪除快照，實際刪除它們
+	if deleteSnapshots {
+		for _, name := range snapshotsToDelete {
+			backup.DeleteBackup(name)
+		}
+	}
+
+	return Result{Success: true, Message: "文件夾已刪除"}
+}
+
+// AssignSnapshotToFolder 將快照分配到文件夾
+func (a *App) AssignSnapshotToFolder(snapshotName, folderId string) Result {
+	if err := backup.AssignSnapshotToFolder(snapshotName, folderId); err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	return Result{Success: true, Message: "快照已移入文件夾"}
+}
+
+// UnassignSnapshot 將快照移至未分類
+func (a *App) UnassignSnapshot(snapshotName string) Result {
+	if err := backup.UnassignSnapshot(snapshotName); err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	return Result{Success: true, Message: "快照已移至未分類"}
 }

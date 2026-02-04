@@ -55,6 +55,7 @@ export namespace main {
 	    balance: number;
 	    isLowBalance: boolean;
 	    cachedAt: string;
+	    folderId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new BackupItem(source);
@@ -77,6 +78,7 @@ export namespace main {
 	        this.balance = source["balance"];
 	        this.isLowBalance = source["isLowBalance"];
 	        this.cachedAt = source["cachedAt"];
+	        this.folderId = source["folderId"];
 	    }
 	}
 	export class CurrentUsageInfo {
@@ -97,6 +99,26 @@ export namespace main {
 	        this.currentUsage = source["currentUsage"];
 	        this.balance = source["balance"];
 	        this.isLowBalance = source["isLowBalance"];
+	    }
+	}
+	export class FolderItem {
+	    id: string;
+	    name: string;
+	    createdAt: string;
+	    order: number;
+	    snapshotCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new FolderItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.createdAt = source["createdAt"];
+	        this.order = source["order"];
+	        this.snapshotCount = source["snapshotCount"];
 	    }
 	}
 	export class OAuthLoginResult {
