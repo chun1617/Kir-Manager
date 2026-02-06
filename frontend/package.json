@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@number-flow/vue": "^0.4.9",
     "vue": "^3.4.0",
     "vue-i18n": "^9.9.0"
   },

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { RefreshRule } from '@/types/refreshInterval'
 import { REFRESH_INTERVAL_STYLES } from '@/constants/refreshIntervalStyles'
+import NumberInput from '@/components/NumberInput.vue'
 
 const props = withDefaults(defineProps<{
   rule: RefreshRule
@@ -56,30 +57,6 @@ const containerClass = computed(() => {
 
 
 /**
- * 處理 minBalance 輸入變更
- */
-function handleMinBalanceChange(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value)
-  emit('update:minBalance', value)
-}
-
-/**
- * 處理 maxBalance 輸入變更
- */
-function handleMaxBalanceChange(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value)
-  emit('update:maxBalance', value)
-}
-
-/**
- * 處理 interval 輸入變更
- */
-function handleIntervalChange(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value)
-  emit('update:interval', value)
-}
-
-/**
  * 處理無上限 checkbox 變更
  */
 function handleUnlimitedChange(event: Event) {
@@ -103,26 +80,28 @@ function handleDelete() {
     data-testid="rule-row"
   >
     <!-- 餘額下限輸入 -->
-    <input
-      type="number"
-      :value="rule.minBalance"
-      :class="REFRESH_INTERVAL_STYLES.input.balance"
+    <NumberInput
+      :model-value="rule.minBalance"
+      :min="0"
+      :max="9999"
+      :step="10"
+      min-width="min-w-[4rem]"
       data-testid="min-balance-input"
-      min="0"
-      @input="handleMinBalanceChange"
+      @update:model-value="emit('update:minBalance', $event)"
     />
     
     <span :class="REFRESH_INTERVAL_STYLES.arrow">~</span>
     
     <!-- 餘額上限輸入 -->
-    <input
-      type="number"
-      :value="rule.maxBalance"
-      :class="REFRESH_INTERVAL_STYLES.input.balance"
+    <NumberInput
+      :model-value="isUnlimited ? 0 : rule.maxBalance"
+      :min="0"
+      :max="9999"
+      :step="10"
       :disabled="isUnlimited"
+      min-width="min-w-[4rem]"
       data-testid="max-balance-input"
-      min="0"
-      @input="handleMaxBalanceChange"
+      @update:model-value="emit('update:maxBalance', $event)"
     />
     
     <!-- 無上限 checkbox -->
@@ -140,13 +119,14 @@ function handleDelete() {
     <span :class="REFRESH_INTERVAL_STYLES.arrow">→</span>
     
     <!-- 間隔輸入 -->
-    <input
-      type="number"
-      :value="rule.interval"
-      :class="REFRESH_INTERVAL_STYLES.input.interval"
+    <NumberInput
+      :model-value="rule.interval"
+      :min="1"
+      :max="60"
+      :step="1"
+      min-width="min-w-[4rem]"
       data-testid="interval-input"
-      min="1"
-      @input="handleIntervalChange"
+      @update:model-value="emit('update:interval', $event)"
     />
     
     <span class="text-sm text-zinc-400">{{ t('refreshInterval.minutes') }}</span>

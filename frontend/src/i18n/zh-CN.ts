@@ -26,7 +26,7 @@ export default {
   app: {
     title: 'Kiro 账号管理器',
     name: 'Kiro 账号管理器',
-    version: 'v0.6.0',
+    version: 'v0.6.1',
     systemReady: '准备就绪',
     online: 'ONLINE',
     processing: '处理中...',
@@ -96,6 +96,8 @@ export default {
     regenerateAll: '批量刷新机器码',
     moveToFolder: '移动到文件夹',
     moveSuccess: '已成功移动 {count} 个快照',
+    partialSuccess: '部分成功，{failed} 项失败',
+    allFailed: '操作失败',
   },
   restore: {
     original: '还原出厂',
@@ -162,6 +164,7 @@ export default {
   },
   message: {
     success: '操作成功',
+    operationTimeout: '操作超时，请稍后再试',
     confirmSwitch: '确定要切换到 {name} 吗？',
     confirmRestore: '警告：这将还原至原始状态，确定吗？',
     confirmReset: '警告：这将生成全新机器指纹并重置环境，确定吗？',
