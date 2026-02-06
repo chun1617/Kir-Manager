@@ -548,7 +548,7 @@ func (a *App) IsDeepLinkSupported() bool {
 // GetAppInfo 取得應用資訊
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
-		"version":   "0.6.0",
+		"version":   "0.6.1",
 		"platform":  runtime.GOOS,
 		"buildTime": time.Now().Format("2025-12-07"),
 	}

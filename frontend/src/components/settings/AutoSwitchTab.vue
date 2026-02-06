@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
 import RefreshIntervalCard from './RefreshIntervalCard.vue'
+import NumberInput from '@/components/NumberInput.vue'
 import { getVisibleCards, type AutoSwitchCardConfig } from '@/constants/autoSwitchCards'
 import { useRefreshIntervals } from '@/composables/useRefreshIntervals'
 import type { RefreshRule } from '@/types/refreshInterval'
@@ -148,27 +149,27 @@ const subscriptionTypes = ['Free', 'Pro', 'Pro+', 'Enterprise']
 
     <!-- 閾值設定卡片 -->
     <SettingsCard v-if="showThresholdCard" :title="t('autoSwitch.balanceThreshold')">
-      <div class="space-y-4">
+      <div class="space-y-6">
         <div>
-          <label class="text-sm text-zinc-400 block mb-2">{{ t('autoSwitch.balanceThresholdDesc') }}</label>
-          <input
-            type="number"
-            :value="balanceThreshold"
-            min="0"
-            max="100"
-            class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100"
-            @input="emit('update:balanceThreshold', Number(($event.target as HTMLInputElement).value))"
+          <label class="text-sm text-zinc-400 block mb-3">{{ t('autoSwitch.balanceThresholdDesc') }}</label>
+          <NumberInput
+            :model-value="balanceThreshold"
+            :min="0"
+            :max="100"
+            :step="5"
+            min-width="min-w-[4rem]"
+            @update:model-value="emit('update:balanceThreshold', $event)"
           />
         </div>
         <div>
-          <label class="text-sm text-zinc-400 block mb-2">{{ t('autoSwitch.minTargetBalanceDesc') }}</label>
-          <input
-            type="number"
-            :value="minTargetBalance"
-            min="0"
-            max="1000"
-            class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100"
-            @input="emit('update:minTargetBalance', Number(($event.target as HTMLInputElement).value))"
+          <label class="text-sm text-zinc-400 block mb-3">{{ t('autoSwitch.minTargetBalanceDesc') }}</label>
+          <NumberInput
+            :model-value="minTargetBalance"
+            :min="0"
+            :max="1000"
+            :step="10"
+            min-width="min-w-[4rem]"
+            @update:model-value="emit('update:minTargetBalance', $event)"
           />
         </div>
       </div>

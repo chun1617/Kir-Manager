@@ -139,3 +139,16 @@
 .animate-pulse-fast {
   animation: pulse-fast 0.3s ease-in-out infinite;
 }
+
+/* NumberFlow 數字動畫樣式 */
+number-flow-vue {
+  display: inline-block;
+  --number-flow-char-height: 1em;
+  --number-flow-mask-height: 0.15em;
+  --number-flow-mask-width: 0.25em;
+}
+
+/* 確保 NumberFlow 內部元素可見 */
+number-flow-vue::part(container) {
+  display: inline-flex;
+}
